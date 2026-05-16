@@ -222,6 +222,8 @@ class SerienstreamEpisode:
     def selected_path(self):
         if self.__selected_path is None:
             raw_path = self.__selected_path_param or os.getenv(
+                "ANIWORLD_SERIES_DOWNLOAD_PATH"
+            ) or os.getenv(
                 "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
             )
 
@@ -245,7 +247,7 @@ class SerienstreamEpisode:
     def selected_language(self):
         if self.__selected_language is None:
             self.__selected_language = self.__selected_language_param or os.getenv(
-                "ANIWORLD_LANGUAGE", "German"
+                "ANIWORLD_LANGUAGE", "German Dub"
             )
         return self.__selected_language
 
@@ -519,8 +521,6 @@ class SerienstreamEpisode:
         """
         Convert a string language description to a (Audio, Subtitles) tuple if necessary.
         """
-        if isinstance(language, tuple) and len(language) == 2:
-            return language
         if isinstance(language, tuple) and len(language) == 2:
             return language
         if language in ["German Dub", "German", "Deutsch"]:
