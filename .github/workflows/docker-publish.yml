@@ -6,6 +6,9 @@ name: Build Docker Image
 # documentation.
 
 on:
+  push:
+    branches:
+      - models
   release:
     types: [published]
 
