@@ -299,15 +299,17 @@ def _run_autosync_for_job(job):
             "English Dub": "english-dub",
         }
 
-        target_languages = []
-        if job.get("language") == "All Languages":
-            disable_eng_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0") == "1"
-            for lang in lang_folder_map.keys():
-                if disable_eng_sub and lang == "English Sub":
-                    continue
-                target_languages.append(lang)
+        # s.to only supports dub languages — no subtitle tracks exist there
+        if prov.name == "SerienStream":
+            all_langs = ["German Dub", "English Dub"]
         else:
-            target_languages.append(job["language"])
+            disable_eng_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0") == "1"
+            all_langs = [
+                lang for lang in lang_folder_map
+                if not (disable_eng_sub and lang == "English Sub")
+            ]
+
+        target_languages = all_langs if job.get("language") == "All Languages" else [job["language"]]
 
         total_new_queued = 0
         total_episodes_found = 0
@@ -1180,6 +1182,16 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             resolved = str(p)
         else:
             resolved = str(Path.home() / "Downloads")
+
+        series_raw = os.environ.get("ANIWORLD_SERIES_DOWNLOAD_PATH", "")
+        if series_raw:
+            sp = Path(series_raw).expanduser()
+            if not sp.is_absolute():
+                sp = Path.home() / sp
+            series_resolved = str(sp)
+        else:
+            series_resolved = ""
+
         lang_separation = os.environ.get("ANIWORLD_LANG_SEPARATION", "0")
         disable_english_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0")
         sync_schedule = os.environ.get("ANIWORLD_SYNC_SCHEDULE", "0")
@@ -1188,6 +1200,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         return jsonify(
             {
                 "download_path": resolved,
+                "series_download_path": series_resolved,
                 "lang_separation": lang_separation,
                 "disable_english_sub": disable_english_sub,
                 "sync_schedule": sync_schedule,
@@ -1210,6 +1223,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         data = request.get_json(silent=True) or {}
         if "download_path" in data:
             os.environ["ANIWORLD_DOWNLOAD_PATH"] = str(data["download_path"]).strip()
+        if "series_download_path" in data:
+            os.environ["ANIWORLD_SERIES_DOWNLOAD_PATH"] = str(data["series_download_path"]).strip()
         if "lang_separation" in data:
             os.environ["ANIWORLD_LANG_SEPARATION"] = (
                 "1" if data["lang_separation"] else "0"

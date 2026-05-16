@@ -140,13 +140,21 @@ endblock %} {% block content %}
   </div>
   <div class="settings-section">
     <h2>Settings</h2>
-    <h3 class="settings-subtitle">Download Path</h3>
+    <h3 class="settings-subtitle">Anime Download Path</h3>
     <div class="settings-row">
       <input type="text" id="downloadPath" placeholder="/path/to/downloads" />
       <button onclick="saveDownloadPath()">Save</button>
     </div>
     <div class="settings-hint">
-      Changes take effect immediately for new downloads
+      Where aniworld.to downloads are saved. Changes take effect immediately for new downloads.
+    </div>
+    <h3 class="settings-subtitle" style="margin-top: 16px">Series Download Path</h3>
+    <div class="settings-row">
+      <input type="text" id="seriesDownloadPath" placeholder="/path/to/downloads/Series (leave empty to use Anime path)" />
+      <button onclick="saveSeriesDownloadPath()">Save</button>
+    </div>
+    <div class="settings-hint">
+      Where s.to series downloads are saved. Falls back to the Anime path if left empty.
     </div>
     <label
       class="settings-checkbox"

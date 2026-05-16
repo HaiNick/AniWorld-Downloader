@@ -1,5 +1,6 @@
 // Download path settings
 const downloadPathInput = document.getElementById("downloadPath");
+const seriesDownloadPathInput = document.getElementById("seriesDownloadPath");
 const langSeparationCb = document.getElementById("langSeparation");
 const disableEnglishSubCb = document.getElementById("disableEnglishSub");
 const syncScheduleSelect = document.getElementById("syncSchedule");
@@ -14,6 +15,8 @@ async function loadSettings() {
     const resp = await fetch("/api/settings");
     const data = await resp.json();
     downloadPathInput.value = data.download_path || "";
+    if (seriesDownloadPathInput)
+      seriesDownloadPathInput.value = data.series_download_path || "";
     if (langSeparationCb)
       langSeparationCb.checked = data.lang_separation === "1";
     if (disableEnglishSubCb)
@@ -123,7 +126,26 @@ async function saveDownloadPath() {
       showToast(data.error);
       return;
     }
-    showToast("Download path saved");
+    showToast("Anime download path saved");
+  } catch (e) {
+    showToast("Failed to save settings: " + e.message);
+  }
+}
+
+async function saveSeriesDownloadPath() {
+  const series_download_path = seriesDownloadPathInput.value.trim();
+  try {
+    const resp = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ series_download_path }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast(data.error);
+      return;
+    }
+    showToast("Series download path saved");
   } catch (e) {
     showToast("Failed to save settings: " + e.message);
   }
