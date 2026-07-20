@@ -71,8 +71,10 @@ RUN rm -rf /ms-playwright/chromium_headless_shell-* && \
 COPY src/ /build/src/
 
 # Install the application package into the virtual env (using cache)
+# --force-reinstall --no-deps: the deps were already installed above without src/;
+# this pass installs just the app module now that src/ is present.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install .[all]
+    pip install --force-reinstall --no-deps .[all]
 
 # Clean up python bytecodes in builder venv
 RUN find /opt/venv -type d -name "__pycache__" -exec rm -rf {} +
@@ -101,10 +103,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         update-ca-certificates; \
     fi
 
-# Create unprivileged user
+# Create unprivileged user and pre-create the X11 socket dir (Xvfb needs it,
+# but can't create it when running as a non-root user).
 RUN adduser --disabled-password --gecos "" aniworld \
     && mkdir -p /app/Downloads /home/aniworld/.aniworld \
-    && chown -R aniworld:aniworld /app /home/aniworld
+    && chown -R aniworld:aniworld /app /home/aniworld \
+    && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
 # Install minimal system dependencies (xvfb and core Chromium shared libraries) (with cache)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -156,7 +160,7 @@ USER aniworld
 EXPOSE 8080
 
 # This command will be inherited by the final stage
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080"]
+CMD ["sh", "-c", "rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080"]
 
 
 # ==========================================
@@ -182,4 +186,4 @@ USER aniworld
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080"]
+CMD ["sh", "-c", "rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080"]
