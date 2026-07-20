@@ -5,13 +5,14 @@ from html import unescape
 from pathlib import Path
 
 from ...config import (
-    GLOBAL_SESSION,
     NAMING_TEMPLATE,
     SERIENSTREAM_EPISODE_PATTERN,
+    build_provider_attempt_order,
     logger,
 )
 from ...extractors import provider_functions
 from ..common import check_downloaded
+from .http import sto_get, sto_host
 from ..common.common import (
     download as episode_download,
 )
@@ -24,11 +25,11 @@ from ..common.common import (
 
 
 # -----------------------------
-# Language Stuff (s.to only)
+# Language Stuff (serienstream.to only)
 # -----------------------------
 class Audio(Enum):
     """
-    Available audio language options (s.to only):
+    Available audio language options (serienstream.to only):
         - GERMAN:  German dub
         - ENGLISH: English dub
     """
@@ -39,14 +40,14 @@ class Audio(Enum):
 
 class Subtitles(Enum):
     """
-    Available subtitle options (s.to only):
+    Available subtitle options (serienstream.to only):
         - NONE: no subtitles
     """
 
     NONE = "None"
 
 
-# Map UI labels to enum tuples (s.to labels)
+# Map UI labels to enum tuples (serienstream.to labels)
 LANG_LABEL_TO_ENUM = {
     "Deutsch": (Audio.GERMAN, Subtitles.NONE),
     "Englisch": (Audio.ENGLISH, Subtitles.NONE),
@@ -175,12 +176,10 @@ class SerienstreamEpisode:
     @property
     def series(self):
         if self._series is None:
+            series_url = self.url.rsplit("/staffel-", 1)[0]
             from .series import SerienstreamSeries
 
-            if not self.url:
-                raise ValueError("Episode URL is missing for series extraction.")
-            series_url = self.url.rsplit("/staffel-", 1)[0]
-            self._series = SerienstreamSeries(url=series_url)
+            self._series = SerienstreamSeries(series_url)
         return self._series
 
     @property
@@ -271,6 +270,13 @@ class SerienstreamEpisode:
             )
         return self.__selected_provider
 
+    @selected_provider.setter
+    def selected_provider(self, value):
+        self.__selected_provider_param = value
+        self.__selected_provider = None
+        self.__redirect_url = None
+        self.__provider_url = None
+
     @property
     def redirect_url(self):
         if self.__redirect_url is None:
@@ -288,22 +294,26 @@ class SerienstreamEpisode:
     def provider_url(self):
         if self.__provider_url is None:
             from urllib.parse import urlparse
+
             from ...playwright.captcha import solve_sto_modal
 
             # Try plain HTTP first — works when no modal is shown
-            resp = GLOBAL_SESSION.get(self.redirect_url)
+            resp = sto_get(self.redirect_url)
             if urlparse(resp.url).netloc != urlparse(self.redirect_url).netloc:
-                # Redirect left s.to — no modal, plain session worked
+                # Redirect left serienstream.to — no modal, plain session worked
                 self.__provider_url = resp.url
             else:
-                # Still on s.to — modal was shown, need browser
+                # Still on serienstream.to — modal was shown, need browser
                 _lang_map = {Audio.GERMAN: "Deutsch", Audio.ENGLISH: "Englisch"}
                 lang = self.selected_language
                 audio = lang[0] if isinstance(lang, tuple) else lang
                 language_label = _lang_map.get(audio, "Deutsch")
 
                 result = solve_sto_modal(
-                    self.url, self.selected_provider, language_label
+                    self.url,
+                    self.selected_provider,
+                    language_label,
+                    redirect_url=self.redirect_url,
                 )
                 self.__provider_url = result if result else resp.url
 
@@ -440,7 +450,7 @@ class SerienstreamEpisode:
             if not self.url:
                 raise ValueError("Episode URL is missing for HTML fetch.")
             logger.debug(f"fetching ({self.url})...")
-            resp = GLOBAL_SESSION.get(self.url)
+            resp = sto_get(self.url)
             self.__html = resp.text
         return self.__html
 
@@ -512,7 +522,7 @@ class SerienstreamEpisode:
                 continue
 
             provider_data.setdefault(key, {})[provider_name] = (
-                f"https://serienstream.to{play_url}"
+                f"https://{sto_host()}{play_url}"
             )
 
         return provider_data
@@ -551,18 +561,7 @@ class SerienstreamEpisode:
         if provider is None:
             provider = self.selected_provider
 
-        provider_dict = self.provider_data.get(language)
-
-        if not provider_dict:
-            # Try fallback (by value in tuple): sometimes enums mismatch, fallback to value match
-            for key, pdict in self.provider_data.items():
-                if (
-                    key[0].value == language[0].value
-                    and key[1].value == language[1].value
-                ):
-                    provider_dict = pdict
-                    break
-
+        provider_dict = self.__provider_dict_for_language(language)
         if not provider_dict:
             raise ValueError(f"No provider data found for language: {language}")
 
@@ -572,6 +571,31 @@ class SerienstreamEpisode:
             return url
 
         raise ValueError(f"Provider '{provider}' not found for language: {language}.")
+
+    def available_providers(self, language=None):
+        if language is None:
+            language = self.selected_language
+        provider_dict = self.__provider_dict_for_language(
+            self._normalize_language(language)
+        )
+        return tuple(provider_dict.keys()) if provider_dict else tuple()
+
+    def provider_attempt_order(self):
+        return build_provider_attempt_order(
+            self.selected_provider,
+            self.available_providers(),
+        )
+
+    def __provider_dict_for_language(self, language):
+        provider_dict = self.provider_data.get(language)
+        if provider_dict:
+            return provider_dict
+
+        for key, pdict in self.provider_data.items():
+            if key[0].value == language[0].value and key[1].value == language[1].value:
+                return pdict
+
+        return None
 
     # -----------------------------
     # PUBLIC METHODS

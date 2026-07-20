@@ -1,11 +1,14 @@
+import json
 import os
 import re
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import fake_useragent
-from niquests import RequestException, Session
+from niquests import Session
 from packaging.version import parse as parse_version
 
 from .env import merge_env
@@ -19,19 +22,34 @@ except PackageNotFoundError:
     VERSION = None
 
 
+def get_latest_version():
+    """Fetch the newest available version from PyPI."""
+    try:
+        logger.debug("Checking latest version on PyPI...")
+        request = Request(
+            "https://pypi.org/pypi/aniworld/json",
+            headers={"User-Agent": DEFAULT_USER_AGENT},
+        )
+        with urlopen(request, timeout=5) as response:
+            payload = json.load(response)
+        latest_version = payload["info"]["version"]
+        logger.debug(f"Latest PyPI version is {latest_version}")
+        return latest_version
+    except (URLError, TimeoutError, OSError, ValueError, KeyError) as exc:
+        logger.debug(f"Could not fetch latest version from PyPI: {exc}")
+        return None
+
+
 def is_newest_version() -> bool:
     """Checks if the installed version is the newest available on PyPI."""
     if not VERSION:
         return False
 
-    try:
-        response = GLOBAL_SESSION.get("https://pypi.org/pypi/aniworld/json")
-        response.raise_for_status()
-        latest_version = response.json()["info"]["version"]
-        return parse_version(VERSION) >= parse_version(latest_version)
-    except RequestException:
-        # Could not fetch PyPI info, assume not newest
+    latest_version = get_latest_version()
+    if not latest_version:
         return False
+
+    return parse_version(VERSION) >= parse_version(latest_version)
 
 
 # AniWorld configuration directory
@@ -93,8 +111,18 @@ LULUVDO_USER_AGENT = (
     "Mozilla/5.0 (Android 15; Mobile; rv:132.0) Gecko/132.0 Firefox/132.0"
 )
 
+# TODO:
+# This is so fucking annoying because using GLOBAL_SESSION anywhere in the
+# codebase ends up importing basically every module, so even a simple fetch
+# takes 20–30 seconds just to start...
+#
+# I already made a lazy-loading wrapper that defers all the __init__.py imports
+# in another branch, but for now I just have to sit through the import time
+# every run, even though the actual fetch only takes about a second
 GLOBAL_SESSION = Session(
     resolver=["doh+google://"],
+    disable_http3=True,
+    multiplexed=False,
     headers={
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Sec-Fetch-Site": "none",
@@ -109,24 +137,101 @@ GLOBAL_SESSION = Session(
 )
 
 logger.debug("Config initialized successfully")
+logger.debug(
+    "If this shit seems to hang, just wait. It's currently loading all modules, which can take up to ~30 seconds, but only once per startup. This is being worked on and won't take nearly as long in the future."
+)
 
 # -----------------------------
 # Provider Stuff
 # -----------------------------
 SUPPORTED_PROVIDERS = (
     "VOE",
+    "MegaKino",
     "Vidmoly",
     "Vidoza",
-    # "Doodstream",
+    "Doodstream",
     # "Filemoon",
     # "LoadX",
     # "Luluvdo",
     # "Streamtape",
 )
 
+
+def parse_provider_order(value, allowed_providers=None):
+    allowed = tuple(dict.fromkeys(allowed_providers or SUPPORTED_PROVIDERS))
+    if not allowed:
+        return tuple()
+
+    if not value:
+        return allowed
+
+    ordered = []
+    seen = set()
+
+    if isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = str(value).split(",")
+
+    for raw_provider in raw_values:
+        provider = raw_provider.strip()
+        if provider and provider in allowed and provider not in seen:
+            ordered.append(provider)
+            seen.add(provider)
+
+    for provider in allowed:
+        if provider not in seen:
+            ordered.append(provider)
+
+    return tuple(ordered)
+
+
+def get_provider_fallback_order(allowed_providers=None):
+    return parse_provider_order(
+        os.getenv("ANIWORLD_PROVIDER_FALLBACK_ORDER", ""),
+        allowed_providers=allowed_providers,
+    )
+
+
+def build_provider_attempt_order(
+    selected_provider, available_providers, fallback_order=None
+):
+    available = tuple(
+        dict.fromkeys(
+            str(provider).strip()
+            for provider in available_providers
+            if str(provider).strip()
+        )
+    )
+    if not available:
+        return (selected_provider,) if selected_provider else tuple()
+
+    ordered = []
+    seen = set()
+
+    if selected_provider and selected_provider in available:
+        ordered.append(selected_provider)
+        seen.add(selected_provider)
+
+    if fallback_order is None:
+        fallback_order = get_provider_fallback_order(allowed_providers=available)
+
+    for provider in parse_provider_order(fallback_order, allowed_providers=available):
+        if provider not in seen:
+            ordered.append(provider)
+            seen.add(provider)
+
+    return tuple(ordered)
+
+
 PROVIDER_HEADERS_D = {
     "Vidmoly": {"Referer": "https://vidmoly.biz"},
-    "Doodstream": {"Referer": "https://dood.li/"},
+    # Doodstream signs the direct link against the requesting client, so the
+    # download must reuse the same User-Agent the extractor sent.
+    "Doodstream": {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Referer": "https://dood.li/",
+    },
     "VOE": {
         "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "*/*",
@@ -137,6 +242,7 @@ PROVIDER_HEADERS_D = {
         "Origin": "https://voe.sx",
     },
     "LoadX": {"Accept": "*/*"},
+    "Cineby": {"Referer": "https://www.cineby.at/"},
     "Filemoon": {"User-Agent": DEFAULT_USER_AGENT, "Referer": "https://filemoon.to"},
     "Luluvdo": {
         "User-Agent": LULUVDO_USER_AGENT,
@@ -148,10 +254,30 @@ PROVIDER_HEADERS_D = {
 
 PROVIDER_HEADERS_W = {
     "Vidmoly": {"Referer": "https://vidmoly.biz"},
-    "Doodstream": {"Referer": "https://dood.li/"},
-    "VOE": {"User-Agent": DEFAULT_USER_AGENT},
-    "Luluvdo": {"User-Agent": LULUVDO_USER_AGENT},
+    # Doodstream signs the direct link against the requesting client, so the
+    # download must reuse the same User-Agent the extractor sent.
+    "Doodstream": {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Referer": "https://dood.li/",
+    },
+    "VOE": {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Referer": "https://voe.sx/",
+        "Origin": "https://voe.sx",
+    },
+    "LoadX": {"Accept": "*/*"},
+    "Cineby": {"Referer": "https://www.cineby.at/"},
     "Filemoon": {"User-Agent": DEFAULT_USER_AGENT, "Referer": "https://filemoon.to"},
+    "Luluvdo": {
+        "User-Agent": LULUVDO_USER_AGENT,
+        "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Origin": "https://luluvdo.com",
+        "Referer": "https://luluvdo.com/",
+    },
 }
 
 
@@ -253,16 +379,21 @@ ANIWORLD_EPISODE_PATTERN = re.compile(
 )
 
 HANIME_TV_SERIES_PATTERN = re.compile(
-    r"^https?://(?:www\.)?hanime\.tv/videos/hentai/[A-Za-z0-9\-]+/?$",
+    r"^https?://(?:www\.)?hanime\.tv/"
+    r"(?:videos/hentai|hentai/video|playlists/[0-9a-z]+/video)/"
+    r"[A-Za-z0-9\-]+/?$",
     re.IGNORECASE,
 )
 
+# serienstream.to went down at times; serienstream.cx and 186.2.175.5 are mirrors.
+_STO_HOST = r"(?:(?:www\.)?(?:serienstream\.(?:to|cx)|s\.to)|186\.2\.175\.5)"
+
 SERIENSTREAM_SERIES_PATTERN = re.compile(
-    r"^https?://(www\.)?(serienstream|s)\.to/serie/[a-zA-Z0-9\-]+/?$", re.IGNORECASE
+    rf"^https?://{_STO_HOST}/serie/[a-zA-Z0-9\-]+/?$", re.IGNORECASE
 )
 
 SERIENSTREAM_SEASON_PATTERN = re.compile(
-    r"^https?://(www\.)?(serienstream|s)\.to/serie/"
+    rf"^https?://{_STO_HOST}/serie/"
     r"[a-zA-Z0-9\-]+/"
     r"staffel-\d+"
     r"/?$",
@@ -270,7 +401,7 @@ SERIENSTREAM_SEASON_PATTERN = re.compile(
 )
 
 SERIENSTREAM_EPISODE_PATTERN = re.compile(
-    r"^https?://(www\.)?(serienstream|s)\.to/serie/"
+    rf"^https?://{_STO_HOST}/serie/"
     r"[a-zA-Z0-9\-]+/"
     r"staffel-\d+/episode-\d+"
     r"/?$",
@@ -282,6 +413,65 @@ HIANIME_SERIES_PATTERN = re.compile(r"", re.IGNORECASE)
 HIANIME_SEASON_PATTERN = re.compile(r"", re.IGNORECASE)
 
 HIANIME_EPISODE_PATTERN = re.compile(r"", re.IGNORECASE)
+
+MEGAKINO_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?megakino[\w-]*\.[^/]+/(?:action|films|serials)/[^?#]+(?:\.html)?/?$",
+    re.IGNORECASE,
+)
+
+MANGA_FIRE_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?mangafire\.to/title/[a-zA-Z0-9]+(?:-[a-zA-Z0-9\-]+)?/?$",
+    re.IGNORECASE,
+)
+
+MANGA_FIRE_CHAPTER_PATTERN = re.compile(
+    r"^https?://(?:www\.)?mangafire\.to/title/[a-zA-Z0-9]+(?:-[a-zA-Z0-9\-]+)?/chapter/[0-9]+(?:\.[0-9]+)?/?$",
+    re.IGNORECASE,
+)
+
+FILMPALAST_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?filmpalast\.[^/]+/stream/[^/?#]+/?$",
+    re.IGNORECASE,
+)
+
+# The trailing (?:\?[^#]*)? lets per-episode URLs (…?s=1&e=2) resolve too.
+KINOX_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?kinox[\w.-]*\.[^/]+/Stream/[^/?#]+?(?:\.html)?(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+_CINEBY_HOST = r"(?:www\.)?cineby\.(?:at|app|[a-z]{2,4})"
+
+# /movie/<id> or /tv/<id> (optionally ?s=N for a specific TV season)
+CINEBY_SERIES_PATTERN = re.compile(
+    rf"^https?://{_CINEBY_HOST}/(?:movie|tv)/\d+(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+# /movie/<id> or /tv/<id>/<season>/<episode>
+CINEBY_EPISODE_PATTERN = re.compile(
+    rf"^https?://{_CINEBY_HOST}/(?:movie/\d+|tv/\d+/\d+/\d+)(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+_BS_HOST = r"(?:www\.)?(?:burning-series\.(?:io|net)|burningseries\.(?:ac|cx)|bs\.cine\.to|bs\.to)"
+
+BURNINGSERIES_SERIES_PATTERN = re.compile(
+    rf"^https?://{_BS_HOST}/serie/[a-zA-Z0-9\-]+(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+# /serie/<slug>/<season>[/<lang>]
+BURNINGSERIES_SEASON_PATTERN = re.compile(
+    rf"^https?://{_BS_HOST}/serie/[a-zA-Z0-9\-]+/\d+(?:/[a-z]{{2}})?/?$",
+    re.IGNORECASE,
+)
+
+# /serie/<slug>/<season>/<episode-slug>/<lang>
+BURNINGSERIES_EPISODE_PATTERN = re.compile(
+    rf"^https?://{_BS_HOST}/serie/[a-zA-Z0-9\-]+/\d+/[^/]+/[a-z]{{2}}/?$",
+    re.IGNORECASE,
+)
 
 # -----------------------------
 # Directories

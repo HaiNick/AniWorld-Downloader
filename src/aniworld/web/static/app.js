@@ -1,6 +1,7 @@
 const searchInput = document.getElementById("searchInput");
 const searchBtn = document.getElementById("searchBtn");
 const searchSpinner = document.getElementById("searchSpinner");
+const browseSpinner = document.getElementById("browseSpinner");
 const resultsDiv = document.getElementById("results");
 const overlay = document.getElementById("overlay");
 const languageSelect = document.getElementById("languageSelect");
@@ -23,9 +24,69 @@ const newSeriesGrid = document.getElementById("newSeriesGrid");
 const popularSeriesGrid = document.getElementById("popularSeriesGrid");
 const newSeriesSection = document.getElementById("newSeriesSection");
 const popularSeriesSection = document.getElementById("popularSeriesSection");
+const popularMoviesGrid = document.getElementById("popularMoviesGrid");
+const popularMoviesSection = document.getElementById("popularMoviesSection");
+const mangaFireTrendingGrid = document.getElementById("mangaFireTrendingGrid");
+const mangaFireTrendingSection = document.getElementById("mangaFireTrendingSection");
+const kinoxMoviesGrid = document.getElementById("kinoxMoviesGrid");
+const kinoxMoviesSection = document.getElementById("kinoxMoviesSection");
+const filmpalastMoviesGrid = document.getElementById("filmpalastMoviesGrid");
+const filmpalastMoviesSection = document.getElementById("filmpalastMoviesSection");
+const burningseriesGrid = document.getElementById("burningseriesGrid");
+const burningseriesSection = document.getElementById("burningseriesSection");
+const cinebyGrid = document.getElementById("cinebyGrid");
+const cinebySection = document.getElementById("cinebySection");
+
+// Browse loaders for the added sites. Defined up here (before showBrowseSections
+// and the initial syncSiteState run) so switching to one of these sites on load
+// never hits a temporal-dead-zone error. makeBrowseLoader references
+// renderBrowseCards / loadDownloadedFolders, which are hoisted function
+// declarations, so calling it here is safe.
+function makeBrowseLoader(endpoint, grid) {
+  let loadedAt = 0;
+  let promise = null;
+  return async function (force = false) {
+    if (!force && loadedAt && Date.now() - loadedAt < BROWSE_REFRESH_MS) return;
+    if (promise) return promise;
+    const showSpinner = !loadedAt || force;
+    loadedAt = Date.now();
+    if (showSpinner && browseSpinner) browseSpinner.style.display = "block";
+    if (showSpinner && grid) grid.innerHTML = "";
+    promise = (async () => {
+      try {
+        const resp = await fetch(endpoint);
+        await loadDownloadedFolders();
+        const data = await resp.json();
+        if (data.results) renderBrowseCards(grid, data.results);
+      } catch (e) {
+        loadedAt = 0;
+      } finally {
+        if (showSpinner && browseSpinner) browseSpinner.style.display = "none";
+        promise = null;
+      }
+    })();
+    return promise;
+  };
+}
+
+const loadKinoxBrowse = kinoxMoviesGrid
+  ? makeBrowseLoader("/api/kinox-movies", kinoxMoviesGrid)
+  : () => {};
+const loadFilmpalastBrowse = filmpalastMoviesGrid
+  ? makeBrowseLoader("/api/filmpalast-movies", filmpalastMoviesGrid)
+  : () => {};
+const loadBurningseriesBrowse = burningseriesGrid
+  ? makeBrowseLoader("/api/burningseries-series", burningseriesGrid)
+  : () => {};
+const loadCinebyBrowse = cinebyGrid
+  ? makeBrowseLoader("/api/cineby-movies", cinebyGrid)
+  : () => {};
+const mangaFireControls = document.getElementById("mangaFireControls");
+const showUnofficialCb = document.getElementById("showUnofficial");
 const BROWSE_REFRESH_MS = 60000;
 
 let currentSeasons = [];
+let currentAllSeasons = [];
 let currentSeriesTitle = "";
 let currentSeriesUrl = "";
 let currentOpenSeriesToken = 0;
@@ -38,6 +99,23 @@ let langSeparationEnabled = false;
 // Static list of providers rendered into the template
 const staticProviders = Array.from(providerSelect.options).map((o) => o.value);
 
+function isMangaFireUrl(url) {
+  return url.includes("mangafire.to/title/");
+}
+
+function getVisibleMangaFireSeasons() {
+  if (!currentAllSeasons.length) return [];
+  if (!showUnofficialCb || showUnofficialCb.checked) return currentAllSeasons;
+  return currentAllSeasons.filter((season) => (season.chapter_type || "").toLowerCase() === "official");
+}
+
+function rebuildMangaFireAccordion() {
+  currentSeasons = getVisibleMangaFireSeasons();
+  seasonEpisodesCache = {};
+  seasonEpisodesLoading = {};
+  buildAccordion(currentSeasons, currentOpenSeriesToken);
+}
+
 // Site toggle state
 let currentSite = "aniworld";
 
@@ -46,9 +124,10 @@ let downloadedFolders = [];
 
 // Custom paths select
 const customPathSelect = document.getElementById("customPathSelect");
+const customPathRow = document.getElementById("customPathRow");
 
 async function loadCustomPaths() {
-  if (!customPathSelect) return;
+  if (!customPathSelect || !customPathRow) return;
   try {
     const resp = await fetch("/api/custom-paths");
     const data = await resp.json();
@@ -56,15 +135,25 @@ async function loadCustomPaths() {
     // Remove old custom options (keep "Default")
     while (customPathSelect.options.length > 1) customPathSelect.remove(1);
     if (paths.length) {
+      let defaultForSite = "";
       paths.forEach(function (p) {
         const opt = document.createElement("option");
         opt.value = p.id;
         opt.textContent = p.name;
         customPathSelect.appendChild(opt);
+        // Pre-select the first path marked as default for the current site.
+        const sites = (p.default_sites || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (!defaultForSite && sites.includes(currentSite)) {
+          defaultForSite = String(p.id);
+        }
       });
-      customPathSelect.style.display = "";
+      customPathSelect.value = defaultForSite;
+      customPathRow.style.display = "";
     } else {
-      customPathSelect.style.display = "none";
+      customPathRow.style.display = "none";
     }
   } catch (e) {
     /* best-effort */
@@ -86,7 +175,11 @@ let stoBrowsePromise = null;
 async function loadStoBrowse(force = false) {
   if (!force && stoLoadedAt && Date.now() - stoLoadedAt < BROWSE_REFRESH_MS) return;
   if (stoBrowsePromise) return stoBrowsePromise;
+  const showSpinner = !stoLoadedAt || force;
   stoLoadedAt = Date.now();
+  if (showSpinner && browseSpinner) browseSpinner.style.display = "block";
+  if (showSpinner && newSeriesGrid) newSeriesGrid.innerHTML = "";
+  if (showSpinner && popularSeriesGrid) popularSeriesGrid.innerHTML = "";
   stoBrowsePromise = (async () => {
     try {
       const [newResp, popResp] = await Promise.all([
@@ -101,21 +194,119 @@ async function loadStoBrowse(force = false) {
     } catch (e) {
       stoLoadedAt = 0;
     } finally {
+      if (showSpinner && browseSpinner) browseSpinner.style.display = "none";
       stoBrowsePromise = null;
     }
   })();
   return stoBrowsePromise;
 }
 
+let mkLoadedAt = 0;
+let mkBrowsePromise = null;
+async function loadMegakinoBrowse(force = false) {
+  if (!force && mkLoadedAt && Date.now() - mkLoadedAt < BROWSE_REFRESH_MS) return;
+  if (mkBrowsePromise) return mkBrowsePromise;
+  const showSpinner = !mkLoadedAt || force;
+  mkLoadedAt = Date.now();
+  if (showSpinner && browseSpinner) browseSpinner.style.display = "block";
+  if (showSpinner && popularMoviesGrid) popularMoviesGrid.innerHTML = "";
+  mkBrowsePromise = (async () => {
+    try {
+      const resp = await fetch("/api/popular-movies");
+      await loadDownloadedFolders();
+      const data = await resp.json();
+      if (data.results) renderBrowseCards(popularMoviesGrid, data.results);
+    } catch (e) {
+      mkLoadedAt = 0;
+    } finally {
+      if (showSpinner && browseSpinner) browseSpinner.style.display = "none";
+      mkBrowsePromise = null;
+    }
+  })();
+  return mkBrowsePromise;
+}
+
+let htvLoadedAt = 0;
+let htvBrowsePromise = null;
+async function loadHtvBrowse(force = false) {
+  if (!force && htvLoadedAt && Date.now() - htvLoadedAt < BROWSE_REFRESH_MS) return;
+  if (htvBrowsePromise) return htvBrowsePromise;
+  const showSpinner = !htvLoadedAt || force;
+  htvLoadedAt = Date.now();
+  if (showSpinner && browseSpinner) browseSpinner.style.display = "block";
+  if (showSpinner && htvTrendingGrid) htvTrendingGrid.innerHTML = "";
+  htvBrowsePromise = (async () => {
+    try {
+      const resp = await fetch("/api/htv-trending");
+      await loadDownloadedFolders();
+      const data = await resp.json();
+      if (data.results) renderBrowseCards(htvTrendingGrid, data.results);
+    } catch (e) {
+      htvLoadedAt = 0;
+    } finally {
+      if (showSpinner && browseSpinner) browseSpinner.style.display = "none";
+      htvBrowsePromise = null;
+    }
+  })();
+  return htvBrowsePromise;
+}
+
+let mangaFireLoadedAt = 0;
+let mangaFireBrowsePromise = null;
+async function loadMangaFireBrowse(force = false) {
+  if (!force && mangaFireLoadedAt && Date.now() - mangaFireLoadedAt < BROWSE_REFRESH_MS) return;
+  if (mangaFireBrowsePromise) return mangaFireBrowsePromise;
+  const showSpinner = !mangaFireLoadedAt || force;
+  mangaFireLoadedAt = Date.now();
+  if (showSpinner && browseSpinner) browseSpinner.style.display = "block";
+  if (showSpinner && mangaFireTrendingGrid) mangaFireTrendingGrid.innerHTML = "";
+  mangaFireBrowsePromise = (async () => {
+    try {
+      const resp = await fetch("/api/mangafire-trending");
+      await loadDownloadedFolders();
+      const data = await resp.json();
+      if (data.results) renderBrowseCards(mangaFireTrendingGrid, data.results);
+    } catch (e) {
+      mangaFireLoadedAt = 0;
+    } finally {
+      if (showSpinner && browseSpinner) browseSpinner.style.display = "none";
+      mangaFireBrowsePromise = null;
+    }
+  })();
+  return mangaFireBrowsePromise;
+}
+
 function showBrowseSections() {
   const isAniworld = currentSite === "aniworld";
+  const isSto = currentSite === "sto";
+  const isMegakino = currentSite === "megakino";
+  const isHtv = currentSite === "htv";
+  const isMangaFire = currentSite === "mangafire";
+  const isKinox = currentSite === "kinox";
+  const isFilmpalast = currentSite === "filmpalast";
+  const isBurningseries = currentSite === "burningseries";
+  const isCineby = currentSite === "cineby";
   browseDiv.style.display = "";
   newAnimesSection.style.display = isAniworld ? "" : "none";
   popularAnimesSection.style.display = isAniworld ? "" : "none";
-  newSeriesSection.style.display = isAniworld ? "none" : "";
-  popularSeriesSection.style.display = isAniworld ? "none" : "";
+  newSeriesSection.style.display = isSto ? "" : "none";
+  popularSeriesSection.style.display = isSto ? "" : "none";
+  if (popularMoviesSection) popularMoviesSection.style.display = isMegakino ? "" : "none";
+  if (htvTrendingSection) htvTrendingSection.style.display = isHtv ? "" : "none";
+  if (mangaFireTrendingSection) mangaFireTrendingSection.style.display = isMangaFire ? "" : "none";
+  if (kinoxMoviesSection) kinoxMoviesSection.style.display = isKinox ? "" : "none";
+  if (filmpalastMoviesSection) filmpalastMoviesSection.style.display = isFilmpalast ? "" : "none";
+  if (burningseriesSection) burningseriesSection.style.display = isBurningseries ? "" : "none";
+  if (cinebySection) cinebySection.style.display = isCineby ? "" : "none";
   if (isAniworld) loadAniworldBrowse();
-  else loadStoBrowse();
+  else if (isSto) loadStoBrowse();
+  else if (isMegakino) loadMegakinoBrowse();
+  else if (isHtv) loadHtvBrowse();
+  else if (isMangaFire) loadMangaFireBrowse();
+  else if (isKinox) loadKinoxBrowse();
+  else if (isFilmpalast) loadFilmpalastBrowse();
+  else if (isBurningseries) loadBurningseriesBrowse();
+  else if (isCineby) loadCinebyBrowse();
 }
 
 function normalizeQuotes(s) {
@@ -146,30 +337,108 @@ function addDownloadedBadge(card, title) {
   }
 }
 
-function toggleSite() {
-  const toggle = document.getElementById("siteToggle");
-  currentSite = toggle.checked ? "sto" : "aniworld";
+const htvTrendingSection = document.getElementById("htvTrendingSection");
+const htvTrendingGrid = document.getElementById("htvTrendingGrid");
+
+const segmentedThumb = document.getElementById("segmentedThumb");
+const htvEnabled = window.HTV_ENABLED;
+const burningseriesEnabled = window.BURNINGSERIES_ENABLED;
+const kinoxEnabled = window.KINOX_ENABLED;
+// BurningSeries and Kinox are opt-in via .env (ANIWORLD_ENABLE_BURNINGSERIES /
+// ANIWORLD_ENABLE_KINOX) and hidden unless enabled, same as the Hanime tab.
+const sites = ["aniworld", "mangafire", "sto", "burningseries", "megakino", "cineby", "kinox", "filmpalast", "htv"].filter(
+  (site) => {
+    if (site === "htv") return htvEnabled;
+    if (site === "burningseries") return burningseriesEnabled;
+    if (site === "kinox") return kinoxEnabled;
+    return true;
+  },
+);
+
+// Movie-only sites behave like MegaKino (single item, no seasons).
+const movieSites = ["megakino", "filmpalast"];
+
+const siteLabelIds = {
+  aniworld: "labelAniworld",
+  sto: "labelSto",
+  megakino: "labelMegakino",
+  cineby: "labelCineby",
+  kinox: "labelKinox",
+  burningseries: "labelBurningSeries",
+  filmpalast: "labelFilmPalast",
+  mangafire: "labelMangaFire",
+  htv: "labelHtv",
+};
+
+const thumbColors = {
+  aniworld: { bg: "linear-gradient(135deg, #8b5cf6, #6d28d9)", shadow: "0 2px 8px rgba(139, 92, 246, 0.35)" },
+  sto: { bg: "linear-gradient(135deg, #38bdf8, #2563eb)", shadow: "0 2px 8px rgba(56, 189, 248, 0.35)" },
+  megakino: { bg: "linear-gradient(135deg, #ef4444, #b91c1c)", shadow: "0 2px 8px rgba(239, 68, 68, 0.35)" },
+  cineby: { bg: "linear-gradient(135deg, #22d3ee, #0891b2)", shadow: "0 2px 8px rgba(34, 211, 238, 0.35)" },
+  kinox: { bg: "linear-gradient(135deg, #34d399, #059669)", shadow: "0 2px 8px rgba(52, 211, 153, 0.35)" },
+  burningseries: { bg: "linear-gradient(135deg, #fb923c, #ea580c)", shadow: "0 2px 8px rgba(251, 146, 60, 0.35)" },
+  filmpalast: { bg: "linear-gradient(135deg, #84cc16, #4d7c0f)", shadow: "0 2px 8px rgba(132, 204, 22, 0.35)" },
+  mangafire: { bg: "linear-gradient(135deg, #f59e0b, #b45309)", shadow: "0 2px 8px rgba(245, 158, 11, 0.35)" },
+  htv: { bg: "linear-gradient(135deg, #ff4fa3, #db2777)", shadow: "0 2px 8px rgba(255, 79, 163, 0.35)" },
+};
+
+function updateSliderState(site) {
+  for (const [siteKey, labelId] of Object.entries(siteLabelIds)) {
+    const label = document.getElementById(labelId);
+    if (label) label.classList.toggle("active", site === siteKey);
+  }
+
+  if (!segmentedThumb) return;
+  const btn = document.getElementById(siteLabelIds[site]);
+  if (!btn) return;
+  const track = btn.parentElement;
+  const trackRect = track.getBoundingClientRect();
+  const btnRect = btn.getBoundingClientRect();
+  segmentedThumb.style.width = btnRect.width + "px";
+  segmentedThumb.style.transform = "translateX(" + (btnRect.left - trackRect.left - 3) + "px)";
+  const color = thumbColors[site] || thumbColors.aniworld;
+  segmentedThumb.style.background = color.bg;
+  segmentedThumb.style.boxShadow = color.shadow;
+}
+
+function switchSite(site) {
+  currentSite = site;
   localStorage.setItem("selectedSite", currentSite);
 
-  // Update labels
-  document
-    .getElementById("labelAniworld")
-    .classList.toggle("active", !toggle.checked);
-  document
-    .getElementById("labelSto")
-    .classList.toggle("active", toggle.checked);
+  updateSliderState(site);
 
   // Update heading
   const heading = document.getElementById("pageHeading");
-  if (heading)
-    heading.textContent = toggle.checked
-      ? "SerienStream Downloader"
-      : "AniWorld Downloader";
+  if (heading) {
+    const headings = {
+      aniworld: "AniWorld Downloader",
+      sto: "SerienStream Downloader",
+      megakino: "MegaKino Downloader",
+      cineby: "Cineby Downloader",
+      kinox: "Kinox Downloader",
+      burningseries: "BurningSeries Downloader",
+      filmpalast: "FilmPalast Downloader",
+      mangafire: "MangaFire Downloader",
+      htv: "Hanime Downloader",
+    };
+    heading.textContent = headings[site] || "AniWorld Downloader";
+  }
 
   // Update search placeholder
-  searchInput.placeholder = toggle.checked
-    ? "Search for series..."
-    : "Search for anime...";
+  const isHtv = site === "htv";
+  const isMangaFire = site === "mangafire";
+  document.querySelector(".search-bar").style.display = "";
+  const placeholders = {
+    mangafire: "Search for manga...",
+    htv: "Search Hanime...",
+    sto: "Search for series...",
+    megakino: "Search MegaKino...",
+    cineby: "Search Cineby...",
+    kinox: "Search Kinox...",
+    burningseries: "Search BurningSeries...",
+    filmpalast: "Search FilmPalast...",
+  };
+  searchInput.placeholder = placeholders[site] || "Search for anime...";
 
   // Clear search results
   resultsDiv.innerHTML = "";
@@ -179,22 +448,34 @@ function toggleSite() {
   showBrowseSections();
 
   // Toggle Random button
-  randomBtn.style.display = toggle.checked ? "none" : "";
+  randomBtn.style.display = site === "aniworld" ? "" : "none";
 
-  // Update language dropdown
-  rebuildLanguageSelect();
+  // Update language dropdown & controls visibility
+  const controlsDiv = document.querySelector(".controls");
+  if (controlsDiv) controlsDiv.style.display = isHtv || isMangaFire ? "none" : "";
+  if (mangaFireControls) mangaFireControls.style.display = isMangaFire ? "flex" : "none";
+  if (!isHtv && !isMangaFire) rebuildLanguageSelect();
 
   // Reset providers
   availableProviders = null;
 }
 
+const siteLangMaps = {
+  sto: () => window.STO_LANGS || {},
+  megakino: () => window.MEGAKINO_LANGS || {},
+  kinox: () => window.KINOX_LANGS || {},
+  burningseries: () => window.BURNINGSERIES_LANGS || {},
+  filmpalast: () => window.FILMPALAST_LANGS || {},
+  cineby: () => window.CINEBY_LANGS || {},
+};
+
 function rebuildLanguageSelect() {
-  const langs =
-    currentSite === "sto"
-      ? window.STO_LANGS || {}
-      : window.ANIWORLD_LANGS || {};
+  const langs = (siteLangMaps[currentSite] || (() => window.ANIWORLD_LANGS || {}))();
   const previousValue = languageSelect.value;
-  const preferredValue = previousValue || window.DEFAULT_WEB_LANGUAGE || "German Dub";
+  const preferredValue =
+    currentSite === "megakino" || movieSites.includes(currentSite)
+      ? "German Dub"
+      : previousValue || window.DEFAULT_WEB_LANGUAGE || "German Dub";
   languageSelect.innerHTML = "";
 
   if (langSeparationEnabled) {
@@ -224,22 +505,18 @@ function rebuildLanguageSelect() {
   }
 }
 
-// Restore site toggle state from localStorage
-(function syncSiteToggle() {
-  const toggle = document.getElementById("siteToggle");
+// Restore site state from localStorage
+(function syncSiteState() {
   const saved = localStorage.getItem("selectedSite");
-  if (saved === "sto") toggle.checked = true;
-  if (toggle && toggle.checked) {
-    currentSite = "sto";
-    document.getElementById("labelAniworld").classList.remove("active");
-    document.getElementById("labelSto").classList.add("active");
-    const heading = document.getElementById("pageHeading");
-    if (heading) heading.textContent = "SerienStream Downloader";
-    searchInput.placeholder = "Search for series...";
-    randomBtn.style.display = "none";
-    rebuildLanguageSelect();
+  const initial = saved && saved !== "aniworld" && sites.includes(saved) ? saved : "aniworld";
+  if (initial !== "aniworld") {
+    switchSite(initial);
+  } else {
+    updateSliderState("aniworld");
   }
+  requestAnimationFrame(() => updateSliderState(currentSite));
 })();
+window.addEventListener("resize", () => updateSliderState(currentSite));
 
 searchInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") doSearch();
@@ -259,13 +536,16 @@ function renderBrowseCards(grid, items) {
     card.className = "browse-card";
     card.onclick = () => openSeries(item.url);
     card.innerHTML =
-      `<img src="${esc(item.poster_url)}" alt="">` +
+      `<img src="${esc(item.poster_url)}" alt="" onerror="this.style.visibility='hidden'">` +
       `<div class="browse-info">` +
       `<div class="browse-title">${esc(item.title)}</div>` +
-      `<div class="browse-genre">${esc(item.genre)}</div>` +
+      `<div class="browse-genre">${esc(item.genre || "")}</div>` +
       `</div>`;
     addDownloadedBadge(card, item.title);
     grid.appendChild(card);
+    // Sites without posters in their listing (e.g. burning-series) fill them
+    // in lazily so the grid still shows instantly.
+    if (!item.poster_url) loadPoster(item.url, card.querySelector("img"));
   });
 }
 
@@ -274,7 +554,11 @@ let aniBrowsePromise = null;
 async function loadAniworldBrowse(force = false) {
   if (!force && aniLoadedAt && Date.now() - aniLoadedAt < BROWSE_REFRESH_MS) return;
   if (aniBrowsePromise) return aniBrowsePromise;
+  const showSpinner = !aniLoadedAt || force;
   aniLoadedAt = Date.now();
+  if (showSpinner && browseSpinner) browseSpinner.style.display = "block";
+  if (showSpinner && newAnimesGrid) newAnimesGrid.innerHTML = "";
+  if (showSpinner && popularAnimesGrid) popularAnimesGrid.innerHTML = "";
   aniBrowsePromise = (async () => {
     try {
       const [newResp, popResp] = await Promise.all([
@@ -289,6 +573,7 @@ async function loadAniworldBrowse(force = false) {
     } catch (e) {
       aniLoadedAt = 0;
     } finally {
+      if (showSpinner && browseSpinner) browseSpinner.style.display = "none";
       aniBrowsePromise = null;
     }
   })();
@@ -302,19 +587,26 @@ function isBrowseVisible() {
 function refreshVisibleBrowse(force = false) {
   if (!isBrowseVisible()) return;
   if (currentSite === "aniworld") loadAniworldBrowse(force);
-  else loadStoBrowse(force);
+  else if (currentSite === "sto") loadStoBrowse(force);
+  else if (currentSite === "megakino") loadMegakinoBrowse(force);
+  else if (currentSite === "mangafire") loadMangaFireBrowse(force);
+  else if (currentSite === "htv") loadHtvBrowse(force);
+  else if (currentSite === "kinox") loadKinoxBrowse(force);
+  else if (currentSite === "filmpalast") loadFilmpalastBrowse(force);
+  else if (currentSite === "burningseries") loadBurningseriesBrowse(force);
+  else if (currentSite === "cineby") loadCinebyBrowse(force);
 }
 
 setInterval(() => {
-  refreshVisibleBrowse(true);
+  refreshVisibleBrowse(false);
 }, BROWSE_REFRESH_MS);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") refreshVisibleBrowse(true);
+  if (document.visibilityState === "visible") refreshVisibleBrowse(false);
 });
 
 window.addEventListener("focus", () => {
-  refreshVisibleBrowse(true);
+  refreshVisibleBrowse(false);
 });
 
 showBrowseSections();
@@ -344,7 +636,7 @@ async function doSearch() {
 
 async function doRandom() {
   if (currentSite === "sto") {
-    showToast("Random is not available for S.TO");
+    showToast("Random is not available for serienstream.to");
     return;
   }
   randomBtn.disabled = true;
@@ -374,10 +666,11 @@ function renderResults(results) {
     const card = document.createElement("div");
     card.className = "card";
     card.onclick = () => openSeries(r.url);
-    card.innerHTML = `<img src="" alt="" data-url="${esc(r.url)}"><div class="info"><div class="title">${esc(r.title)}</div></div>`;
+    const posterSrc = r.poster_url ? esc(r.poster_url) : "";
+    card.innerHTML = `<img src="${posterSrc}" alt="" data-url="${esc(r.url)}"><div class="info"><div class="title">${esc(r.title)}</div></div>`;
     addDownloadedBadge(card, r.title);
     resultsDiv.appendChild(card);
-    loadPoster(r.url, card.querySelector("img"));
+    if (!r.poster_url) loadPoster(r.url, card.querySelector("img"));
   });
 }
 
@@ -407,9 +700,20 @@ async function openSeries(url) {
   providersLoadedForSeries = false;
   currentSeriesUrl = url;
   currentSeriesTitle = "";
+  const isHtvSeries = url.includes("hanime.tv/");
+  const isMangaFireSeries = isMangaFireUrl(url);
+  const controlsDiv = document.querySelector(".controls");
+  if (controlsDiv) controlsDiv.style.display = isHtvSeries || isMangaFireSeries ? "none" : "";
+  if (mangaFireControls) mangaFireControls.style.display = isMangaFireSeries ? "flex" : "none";
   await checkLangSeparation();
-  rebuildLanguageSelect();
-  resetProviderDropdown();
+  if (downloadAllLangsBtn && isMangaFireSeries) {
+    downloadAllLangsBtn.style.display = "none";
+  }
+  if (!isHtvSeries && !isMangaFireSeries) {
+    rebuildLanguageSelect();
+    resetProviderDropdown();
+  }
+  if (showUnofficialCb) showUnofficialCb.checked = false;
   loadCustomPaths();
 
   try {
@@ -422,7 +726,10 @@ async function openSeries(url) {
     if (openToken !== currentOpenSeriesToken) return;
 
     currentSeriesTitle = seriesData.title || "Unknown";
-    document.getElementById("modalTitle").textContent = currentSeriesTitle;
+    const titleEl = document.getElementById("modalTitle");
+    const titleUrl =
+      (seriesData.episode_urls && seriesData.episode_urls[0]) || currentSeriesUrl;
+    titleEl.innerHTML = `<a href="${titleUrl}" target="_blank" rel="noopener noreferrer">${currentSeriesTitle}</a>`;
     if (seriesData.poster_url)
       document.getElementById("modalPoster").src = seriesData.poster_url;
     document.getElementById("modalGenres").textContent = (
@@ -433,7 +740,8 @@ async function openSeries(url) {
     document.getElementById("modalDesc").textContent =
       seriesData.description || "";
 
-    currentSeasons = seasonsData.seasons || [];
+    currentAllSeasons = seasonsData.seasons || [];
+    currentSeasons = isMangaFireSeries ? getVisibleMangaFireSeasons() : currentAllSeasons;
     buildAccordion(currentSeasons, openToken);
 
     // Check if auto-sync exists for this series
@@ -466,9 +774,11 @@ function buildAccordion(seasons, openToken) {
 
     const count =
       typeof season.episode_count === "number" ? season.episode_count : "?";
-    const label = season.are_movies
-      ? `Movies (${count} episodes)`
-      : `Season ${season.season_number} (${count} episodes)`;
+    const label = currentSite === "mangafire"
+      ? `Chapter ${season.season_number}`
+      : season.are_movies
+        ? `Movies (${count} episodes)`
+        : `Season ${season.season_number} (${count} episodes)`;
 
     const header = document.createElement("div");
     header.className = "season-header" + (index === 0 ? " expanded" : "");
@@ -499,6 +809,11 @@ function buildAccordion(seasons, openToken) {
   }
 }
 
+function toggleShowUnofficial() {
+  if (currentSite !== "mangafire") return;
+  rebuildMangaFireAccordion();
+}
+
 async function loadSeasonEpisodes(index, openToken = currentOpenSeriesToken) {
   if (seasonEpisodesCache[index]) return seasonEpisodesCache[index];
   if (seasonEpisodesLoading[index]) return seasonEpisodesLoading[index];
@@ -506,16 +821,21 @@ async function loadSeasonEpisodes(index, openToken = currentOpenSeriesToken) {
   const body = document.getElementById("seasonBody-" + index);
   if (!season || !body) return [];
 
-  seasonEpisodesLoading[index] = fetch(
-    "/api/episodes?url=" + encodeURIComponent(season.url),
-  )
+  let epUrl = "/api/episodes?url=" + encodeURIComponent(season.url || currentSeriesUrl);
+  if (!season.url && currentSeriesUrl) {
+    epUrl += "&series_url=" + encodeURIComponent(currentSeriesUrl);
+  }
+  if (currentSite === "mangafire" && currentSeriesUrl) {
+    epUrl += "&series_url=" + encodeURIComponent(currentSeriesUrl);
+  }
+  seasonEpisodesLoading[index] = fetch(epUrl)
     .then((r) => r.json())
     .then((data) => {
       if (openToken !== currentOpenSeriesToken) return [];
       const episodes = data.episodes || [];
       seasonEpisodesCache[index] = episodes;
       renderSeasonEpisodes(index, episodes);
-      if (!providersLoadedForSeries && episodes.length) {
+      if (!providersLoadedForSeries && episodes.length && currentSite !== "mangafire") {
         providersLoadedForSeries = true;
         fetchProviders(episodes[0].url);
       }
@@ -544,11 +864,25 @@ function renderSeasonEpisodes(index, episodes) {
   episodes.forEach((ep) => {
     const div = document.createElement("div");
     div.className = "episode-item";
-    const title = ep.title_en || ep.title_de || "";
+    const pageCount = typeof ep.page_count === "number" ? ep.page_count : 0;
+    const title = currentSite === "mangafire"
+      ? `<span class="ep-title-main">${pageCount ? `Page ${ep.page_number} of ${pageCount}` : `Page ${ep.page_number}`}</span>`
+      : (ep.title_en || ep.title_de)
+        ? `<span class="ep-title-main">${esc(ep.title_en || ep.title_de)}</span>`
+        : '<span class="ep-title-fallback">[Not Available]</span>';
+    const languageBadges = renderEpisodeLanguageBadges(ep.available_languages || []);
     const dlIcon = ep.downloaded
       ? '<span class="ep-downloaded" title="Downloaded">&#10003;</span>'
       : "";
-    div.innerHTML = `<input type="checkbox" value="${esc(ep.url)}" data-season="${index}"><span class="ep-num">E${ep.episode_number}</span>${dlIcon}<span class="ep-title">${esc(title)}</span>`;
+    const epPrefix = currentSite === "mangafire" ? "P" : "E";
+    const chapterUrl = ep.chapter_url || ep.url || "";
+    const value = currentSite === "mangafire"
+      ? `${chapterUrl}##${ep.page_number}`
+      : ep.url;
+    const extraAttrs = currentSite === "mangafire"
+      ? ` data-chapter-url="${esc(chapterUrl)}" data-page-number="${ep.page_number}"`
+      : "";
+    div.innerHTML = `<input type="checkbox" value="${esc(value)}" data-season="${index}"${extraAttrs}><span class="ep-num">${epPrefix}${ep.episode_number}</span>${dlIcon}<div class="ep-main"><span class="ep-title">${title}</span>${languageBadges}</div>`;
     body.appendChild(div);
   });
 
@@ -561,10 +895,52 @@ function renderSeasonEpisodes(index, episodes) {
     : "";
   const label = season.are_movies
     ? `Movies (${episodes.length} episodes)`
-    : `Season ${season.season_number} (${episodes.length} episodes)`;
+    : currentSite === "mangafire"
+      ? `Chapter ${season.season_number}`
+      : `Season ${season.season_number} (${episodes.length} episodes)`;
   header.innerHTML =
     `<div class="season-label"><span class="season-arrow">&#9654;</span> ${esc(label)}${seasonDlIcon}</div>` +
     `<label class="season-all-label" onclick="event.stopPropagation()"><input type="checkbox" onchange="toggleSeasonAll(this, ${index})"> All</label>`;
+}
+
+function renderEpisodeLanguageBadges(labels) {
+  if (!labels.length) return "";
+  return `<span class="ep-language-badges">${labels
+    .map((label) => {
+      const badge = getEpisodeLanguageBadge(label);
+      const cls = getEpisodeLanguageBadgeClass(label);
+      const flagMarkup = (badge ? badge.flags : [])
+        .map(
+          (flag) =>
+            `<img class="ep-language-flag" src="/static/flags/${flag}.svg" alt="" aria-hidden="true">`,
+        )
+        .join("");
+      const text = badge ? badge.text : label;
+      return `<span class="ep-language-badge ${cls}" title="${esc(label)}">${flagMarkup}<span class="ep-language-badge-text">${esc(text)}</span></span>`;
+    })
+    .join("")}</span>`;
+}
+
+function getEpisodeLanguageBadge(label) {
+  const badgeMap = {
+    "German Dub": { flags: ["de"], text: "Dub" },
+    "German Sub": { flags: ["jp", "de"], text: "Sub" },
+    "English Dub": { flags: ["gb"], text: "Dub" },
+    "English Sub": { flags: ["jp", "gb"], text: "Sub" },
+    Japanese: { flags: ["jp"], text: "Dub" },
+  };
+  return badgeMap[label] || null;
+}
+
+function getEpisodeLanguageBadgeClass(label) {
+  const classMap = {
+    "German Dub": "badge-german-dub",
+    "German Sub": "badge-german-sub",
+    "English Dub": "badge-english-dub",
+    "English Sub": "badge-english-sub",
+    Japanese: "badge-german-dub",
+  };
+  return classMap[label] || "badge-default";
 }
 
 async function toggleSeason(index) {
@@ -618,17 +994,43 @@ function syncSelectAll() {
 }
 
 function getAllEpisodeUrls() {
+  if (currentSite === "mangafire") {
+    return collectMangaFireDownloadItems(false);
+  }
   return Array.from(
     seasonAccordion.querySelectorAll(".episode-item input[type=checkbox]"),
   ).map((cb) => cb.value);
 }
 
 function getSelectedEpisodeUrls() {
+  if (currentSite === "mangafire") {
+    return collectMangaFireDownloadItems(true);
+  }
   return Array.from(
     seasonAccordion.querySelectorAll(
       ".episode-item input[type=checkbox]:checked",
     ),
   ).map((cb) => cb.value);
+}
+
+function collectMangaFireDownloadItems(onlyChecked) {
+  const selector = onlyChecked
+    ? ".episode-item input[type=checkbox]:checked"
+    : ".episode-item input[type=checkbox]";
+  const grouped = new Map();
+  seasonAccordion.querySelectorAll(selector).forEach((cb) => {
+    const chapterUrl = cb.dataset.chapterUrl || cb.value.split("##")[0];
+    const pageNumber = parseInt(cb.dataset.pageNumber || "0", 10);
+    if (!chapterUrl || !pageNumber) return;
+    if (!grouped.has(chapterUrl)) grouped.set(chapterUrl, new Set());
+    grouped.get(chapterUrl).add(pageNumber);
+  });
+
+  return Array.from(grouped.entries()).map(([url, pageSet]) => ({
+    url,
+    series_url: currentSeriesUrl,
+    selected_pages: Array.from(pageSet).sort((a, b) => a - b),
+  }));
 }
 
 async function fetchProviders(episodeUrl) {
@@ -639,6 +1041,7 @@ async function fetchProviders(episodeUrl) {
     const data = await resp.json();
     if (data.providers) {
       availableProviders = data.providers;
+      filterLanguageSelectToAvailable();
       updateProviderDropdown();
     }
   } catch (e) {
@@ -646,14 +1049,38 @@ async function fetchProviders(episodeUrl) {
   }
 }
 
+function filterLanguageSelectToAvailable() {
+  if (!availableProviders) return;
+  const availableLangs = Object.keys(availableProviders);
+  if (!availableLangs.length) return;
+
+  const previousValue = languageSelect.value;
+
+  for (const opt of Array.from(languageSelect.options)) {
+    if (opt.value === "All Languages") continue;
+    opt.hidden = !availableLangs.includes(opt.value);
+  }
+
+  // Keep selection if still valid, otherwise pick first available
+  const visibleOptions = Array.from(languageSelect.options).filter(
+    (opt) => !opt.hidden,
+  );
+  const stillValid = visibleOptions.some((opt) => opt.value === previousValue);
+  if (!stillValid && visibleOptions.length) {
+    languageSelect.value = visibleOptions[0].value;
+  }
+}
+
 function resetProviderDropdown() {
   providerSelect.innerHTML = "";
-  staticProviders.forEach((p) => {
-    const opt = document.createElement("option");
-    opt.value = p;
-    opt.textContent = p;
-    providerSelect.appendChild(opt);
-  });
+  if (currentSite !== "megakino") {
+    staticProviders.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      providerSelect.appendChild(opt);
+    });
+  }
   selectDefaultProvider();
 }
 
@@ -672,12 +1099,14 @@ function updateProviderDropdown() {
       providerSelect.appendChild(opt);
     });
   } else {
-    staticProviders.forEach((p) => {
-      const opt = document.createElement("option");
-      opt.value = p;
-      opt.textContent = p;
-      providerSelect.appendChild(opt);
-    });
+    if (currentSite !== "megakino") {
+      staticProviders.forEach((p) => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        providerSelect.appendChild(opt);
+      });
+    }
   }
   selectDefaultProvider();
 }
@@ -688,6 +1117,10 @@ function selectDefaultProvider() {
       providerSelect.value = "VOE";
       return;
     }
+  }
+
+  if (providerSelect.options.length) {
+    providerSelect.value = providerSelect.options[0].value;
   }
 }
 
@@ -703,8 +1136,18 @@ async function startDownload(all) {
     return;
   }
 
-  const language = languageSelect.value;
-  const provider = providerSelect.value;
+  const isHtvDl = currentSeriesUrl.includes("hanime.tv/");
+  const isMangaFireDl = isMangaFireUrl(currentSeriesUrl);
+  const language = isHtvDl
+    ? "Japanese"
+    : isMangaFireDl
+      ? "MangaFire"
+      : languageSelect.value;
+  const provider = isHtvDl
+    ? "HanimeTV"
+    : isMangaFireDl
+      ? "MangaFire"
+      : providerSelect.value;
 
   downloadAllBtn.disabled = true;
   downloadSelectedBtn.disabled = true;
@@ -716,6 +1159,12 @@ async function startDownload(all) {
       title: currentSeriesTitle,
       series_url: currentSeriesUrl,
     };
+    if (isMangaFireDl) {
+      const formatSelect = document.getElementById("mangaFireFormat");
+      if (formatSelect) {
+        dlBody.mangafire_format = formatSelect.value;
+      }
+    }
     if (customPathSelect && customPathSelect.value) {
       dlBody.custom_path_id = parseInt(customPathSelect.value);
     }
@@ -760,11 +1209,12 @@ async function toggleAutoSync() {
     await toggleSelectAll();
     // Create sync job
     try {
+      const isMangaFireDl = isMangaFireUrl(currentSeriesUrl);
       const body = {
         title: currentSeriesTitle,
         series_url: currentSeriesUrl,
-        language: languageSelect.value,
-        provider: providerSelect.value,
+        language: isMangaFireDl ? "MangaFire" : languageSelect.value,
+        provider: isMangaFireDl ? "MangaFire" : providerSelect.value,
       };
       if (customPathSelect && customPathSelect.value) {
         body.custom_path_id = parseInt(customPathSelect.value);
@@ -778,10 +1228,10 @@ async function toggleAutoSync() {
       if (data.ok) {
         showToast('Auto-Sync enabled for "' + currentSeriesTitle + '"');
       } else if (resp.status === 409 && data.job) {
-        // Job already exists — update it with current modal settings
+        const isMangaFireDl = isMangaFireUrl(currentSeriesUrl);
         const updateBody = {
-          language: languageSelect.value,
-          provider: providerSelect.value,
+          language: isMangaFireDl ? "MangaFire" : languageSelect.value,
+          provider: isMangaFireDl ? "MangaFire" : providerSelect.value,
           custom_path_id:
             customPathSelect && customPathSelect.value
               ? parseInt(customPathSelect.value)
@@ -806,7 +1256,6 @@ async function toggleAutoSync() {
       autoSyncCheck.checked = false;
     }
   } else {
-    // Remove sync job
     try {
       const resp = await fetch(
         "/api/autosync/check?url=" + encodeURIComponent(currentSeriesUrl),
@@ -870,6 +1319,10 @@ async function checkLangSeparation() {
 }
 
 async function startDownloadAllLangs() {
+  if (currentSite === "mangafire") {
+    showToast("All Languages is not available for MangaFire.");
+    return;
+  }
   episodeSpinner.style.display = "block";
   await ensureAllSeasonsLoaded();
   episodeSpinner.style.display = "none";

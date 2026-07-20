@@ -3,12 +3,16 @@ const downloadPathInput = document.getElementById("downloadPath");
 const seriesDownloadPathInput = document.getElementById("seriesDownloadPath");
 const langSeparationCb = document.getElementById("langSeparation");
 const disableEnglishSubCb = document.getElementById("disableEnglishSub");
+const enableHtvCb = document.getElementById("enableHtv");
 const syncScheduleSelect = document.getElementById("syncSchedule");
 const syncLanguageSelect = document.getElementById("syncLanguage");
 const syncProviderSelect = document.getElementById("syncProvider");
+const providerFallbackOrderEl = document.getElementById("providerFallbackOrder");
 const publicIpValue = document.getElementById("publicIpValue");
 const publicIpMeta = document.getElementById("publicIpMeta");
 const refreshPublicIpBtn = document.getElementById("refreshPublicIpBtn");
+let availableProviders = [];
+let providerFallbackOrder = [];
 
 async function loadSettings() {
   try {
@@ -21,6 +25,7 @@ async function loadSettings() {
       langSeparationCb.checked = data.lang_separation === "1";
     if (disableEnglishSubCb)
       disableEnglishSubCb.checked = data.disable_english_sub === "1";
+    if (enableHtvCb) enableHtvCb.checked = data.enable_htv === "1";
     if (syncScheduleSelect && data.sync_schedule)
       syncScheduleSelect.value = data.sync_schedule;
 
@@ -31,12 +36,129 @@ async function loadSettings() {
     }
     updateSyncLanguageDropdown(isLangSep, currentSyncLang);
 
-    if (syncProviderSelect && data.sync_provider)
-      syncProviderSelect.value = data.sync_provider;
+    availableProviders = Array.isArray(data.available_providers)
+      ? data.available_providers
+      : [];
+    updateSyncProviderDropdown(availableProviders, data.sync_provider);
+    renderProviderFallbackOrder(data.provider_fallback_order || availableProviders);
+
+    const uiLanguage = document.getElementById("uiLanguage");
+    if (uiLanguage && data.ui_language) uiLanguage.value = data.ui_language;
+    const outputFormat = document.getElementById("outputFormat");
+    if (outputFormat && data.output_format) outputFormat.value = data.output_format;
+    const movieFolder = document.getElementById("movieFolder");
+    if (movieFolder) movieFolder.checked = data.movie_folder !== "0";
+
+    if (data.discord) applyDiscordSettings(data.discord);
   } catch (e) {
     showToast("Failed to load settings: " + e.message);
   }
 }
+
+async function putSettings(payload, successMsg) {
+  try {
+    const resp = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast(data.error);
+      return false;
+    }
+    if (successMsg) showToast(successMsg);
+    return true;
+  } catch (e) {
+    showToast("Failed to save: " + e.message);
+    return false;
+  }
+}
+
+function saveUiLanguage() {
+  const value = document.getElementById("uiLanguage").value;
+  // setLanguage() persists to the server and re-renders the page instantly.
+  if (typeof window.setLanguage === "function") window.setLanguage(value);
+  else putSettings({ ui_language: value });
+}
+
+function saveOutputFormat() {
+  const value = document.getElementById("outputFormat").value;
+  putSettings({ output_format: value }, "Output format saved");
+}
+
+function saveMovieFolder() {
+  const checked = document.getElementById("movieFolder").checked;
+  putSettings({ movie_folder: checked }, "Setting saved");
+}
+
+// ===== Discord bot =====
+
+function applyDiscordSettings(d) {
+  const enabled = document.getElementById("discordEnabled");
+  const owner = document.getElementById("discordOwner");
+  const mode = document.getElementById("discordMode");
+  const role = document.getElementById("discordRole");
+  const guild = document.getElementById("discordGuild");
+  const language = document.getElementById("discordLanguage");
+  const announce = document.getElementById("discordAnnounce");
+  const token = document.getElementById("discordToken");
+  if (enabled) enabled.checked = !!d.enabled;
+  if (owner) owner.value = d.owner_id || "";
+  if (mode) mode.value = d.mode || "standard";
+  if (role) role.value = d.request_role_id || "";
+  if (guild) guild.value = d.guild_id || "";
+  if (language) language.value = d.language || "en";
+  if (announce) announce.value = d.announce_channel_id || "";
+  // Show a placeholder when a token is already stored; leave blank to keep it.
+  if (token) token.placeholder = d.token_set ? "••••••••" : "";
+  loadDiscordStatus();
+}
+
+async function saveDiscord() {
+  const token = document.getElementById("discordToken").value;
+  const payload = {
+    discord: {
+      enabled: document.getElementById("discordEnabled").checked,
+      owner_id: document.getElementById("discordOwner").value.trim(),
+      mode: document.getElementById("discordMode").value,
+      request_role_id: document.getElementById("discordRole").value.trim(),
+      guild_id: document.getElementById("discordGuild").value.trim(),
+      language: document.getElementById("discordLanguage").value,
+      announce_channel_id: document.getElementById("discordAnnounce").value.trim(),
+    },
+  };
+  // Only send the token when the user actually typed a new one.
+  if (token && token !== "••••••••") payload.discord.token = token;
+
+  const ok = await putSettings(payload, "Discord settings saved");
+  if (ok) {
+    document.getElementById("discordToken").value = "";
+    setTimeout(loadDiscordStatus, 1500);
+  }
+}
+
+async function loadDiscordStatus() {
+  const el = document.getElementById("discordStatus");
+  if (!el) return;
+  try {
+    const resp = await fetch("/api/discord/status");
+    const data = await resp.json();
+    if (data.running) {
+      el.textContent = "● " + (data.user ? data.user : "online");
+      el.className = "discord-status discord-status-on";
+    } else if (data.error) {
+      el.textContent = "● " + data.error;
+      el.className = "discord-status discord-status-err";
+    } else {
+      el.textContent = "○ offline";
+      el.className = "discord-status discord-status-off";
+    }
+  } catch (e) {
+    el.textContent = "";
+  }
+}
+
 
 async function saveLangSeparation() {
   try {
@@ -55,7 +177,7 @@ async function saveLangSeparation() {
     }
     showToast(
       "Language separation " +
-        (langSeparationCb.checked ? "enabled" : "disabled"),
+      (langSeparationCb.checked ? "enabled" : "disabled"),
     );
 
     let currentSyncLang = syncLanguageSelect ? syncLanguageSelect.value : null;
@@ -90,6 +212,88 @@ function updateSyncLanguageDropdown(isLangSep, currentValue) {
   if (currentValue) syncLanguageSelect.value = currentValue;
 }
 
+function updateSyncProviderDropdown(providers, currentValue) {
+  if (!syncProviderSelect) return;
+  syncProviderSelect.innerHTML = "";
+  providers.forEach((provider) => {
+    const opt = document.createElement("option");
+    opt.value = provider;
+    opt.textContent = provider;
+    syncProviderSelect.appendChild(opt);
+  });
+  if (currentValue && providers.includes(currentValue)) {
+    syncProviderSelect.value = currentValue;
+  } else if (providers.length) {
+    syncProviderSelect.value = providers[0];
+  }
+}
+
+function renderProviderFallbackOrder(order) {
+  if (!providerFallbackOrderEl) return;
+
+  const normalized = Array.isArray(order) ? order.filter(Boolean) : [];
+  providerFallbackOrder = normalized.filter((provider) =>
+    availableProviders.includes(provider),
+  );
+
+  availableProviders.forEach((provider) => {
+    if (!providerFallbackOrder.includes(provider)) {
+      providerFallbackOrder.push(provider);
+    }
+  });
+
+  providerFallbackOrderEl.innerHTML = "";
+  if (!providerFallbackOrder.length) {
+    providerFallbackOrderEl.textContent = "No providers available";
+    return;
+  }
+
+  providerFallbackOrder.forEach((provider, index) => {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.justifyContent = "space-between";
+    row.style.gap = "12px";
+    row.style.padding = "8px 0";
+    row.style.borderBottom = "1px solid rgba(255,255,255,.06)";
+
+    const label = document.createElement("span");
+    label.textContent = `${index + 1}. ${provider}`;
+
+    const controls = document.createElement("div");
+    controls.style.display = "flex";
+    controls.style.gap = "8px";
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.textContent = "Up";
+    up.disabled = index === 0;
+    up.onclick = () => moveProviderFallback(index, -1);
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.textContent = "Down";
+    down.disabled = index === providerFallbackOrder.length - 1;
+    down.onclick = () => moveProviderFallback(index, 1);
+
+    controls.appendChild(up);
+    controls.appendChild(down);
+    row.appendChild(label);
+    row.appendChild(controls);
+    providerFallbackOrderEl.appendChild(row);
+  });
+}
+
+function moveProviderFallback(index, direction) {
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= providerFallbackOrder.length) return;
+  const updated = providerFallbackOrder.slice();
+  [updated[index], updated[nextIndex]] = [updated[nextIndex], updated[index]];
+  providerFallbackOrder = updated;
+  renderProviderFallbackOrder(providerFallbackOrder);
+  saveProviderFallbackOrder();
+}
+
 async function saveDisableEnglishSub() {
   try {
     const resp = await fetch("/api/settings", {
@@ -106,8 +310,28 @@ async function saveDisableEnglishSub() {
     }
     showToast(
       "English Sub downloads " +
-        (disableEnglishSubCb.checked ? "disabled" : "enabled"),
+      (disableEnglishSubCb.checked ? "disabled" : "enabled"),
     );
+  } catch (e) {
+    showToast("Failed to save setting: " + e.message);
+  }
+}
+
+async function saveEnableHtv() {
+  try {
+    const resp = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enable_htv: enableHtvCb.checked,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast(data.error);
+      return;
+    }
+    showToast("Hanime tab " + (enableHtvCb.checked ? "enabled" : "disabled"));
   } catch (e) {
     showToast("Failed to save setting: " + e.message);
   }
@@ -213,6 +437,21 @@ async function saveSyncDefaults() {
   }
 }
 
+async function saveProviderFallbackOrder() {
+  try {
+    const resp = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider_fallback_order: providerFallbackOrder }),
+    });
+    const data = await resp.json();
+    if (data.ok) showToast("Provider fallback order saved");
+    else showToast(data.error || "Failed to save provider fallback order");
+  } catch (e) {
+    showToast("Failed to save provider fallback order: " + e.message);
+  }
+}
+
 // Custom paths management
 const customPathsBody = document.getElementById("customPathsBody");
 const customPathsTable = document.getElementById("customPathsTable");
@@ -232,16 +471,47 @@ async function loadCustomPaths() {
   }
 }
 
+const PATH_SITE_OPTIONS = [
+  ["aniworld", "AniWorld"],
+  ["sto", "SerienStream"],
+  ["megakino", "MegaKino"],
+  ["kinox", "Kinox"],
+  ["burningseries", "BurningSeries"],
+  ["filmpalast", "FilmPalast"],
+  ["mangafire", "MangaFire"],
+  ["htv", "Hanime"],
+];
+
 function renderCustomPaths(paths) {
   customPathsBody.innerHTML = "";
   if (!paths.length) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      '<td colspan="3" style="color:#6b7280;text-align:center">No custom paths</td>';
+      '<td colspan="4" style="color:#6b7280;text-align:center">No custom paths</td>';
     customPathsBody.appendChild(tr);
     return;
   }
   paths.forEach(function (p) {
+    const active = (p.default_sites || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const chips = PATH_SITE_OPTIONS.map(function ([key, label]) {
+      const checked = active.includes(key) ? "checked" : "";
+      return (
+        '<label class="path-site-chip">' +
+        '<input type="checkbox" ' +
+        checked +
+        ' onchange="togglePathSite(' +
+        p.id +
+        ",'" +
+        key +
+        "',this.checked)\"> " +
+        esc(label) +
+        "</label>"
+      );
+    }).join("");
+
     const tr = document.createElement("tr");
     tr.innerHTML =
       "<td>" +
@@ -250,11 +520,40 @@ function renderCustomPaths(paths) {
       "<td style=\"font-family:'SF Mono','Fira Code',monospace;font-size:.82rem\">" +
       esc(p.path) +
       "</td>" +
+      '<td><div class="path-site-chips">' +
+      chips +
+      "</div></td>" +
       '<td><button class="btn-del" onclick="deleteCustomPath(' +
       p.id +
       ')">Delete</button></td>';
     customPathsBody.appendChild(tr);
   });
+}
+
+async function togglePathSite(pathId, siteKey, enabled) {
+  try {
+    const resp = await fetch("/api/custom-paths");
+    const data = await resp.json();
+    const path = (data.paths || []).find((p) => p.id === pathId);
+    const active = new Set(
+      (path && path.default_sites ? path.default_sites : "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+    if (enabled) active.add(siteKey);
+    else active.delete(siteKey);
+
+    const save = await fetch("/api/custom-paths/" + pathId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_sites: Array.from(active) }),
+    });
+    const result = await save.json();
+    if (result.error) showToast(result.error);
+  } catch (e) {
+    showToast("Failed to update default sites: " + e.message);
+  }
 }
 
 async function addCustomPath() {
@@ -340,10 +639,9 @@ function renderUsers(users) {
       </td>` +
       `<td>${authBadge}</td>` +
       `<td>${esc(u.created_at)}</td>` +
-      `<td>${
-        isLastAdmin
-          ? '<span style="color:#555">protected</span>'
-          : `<button class="btn-del" onclick="deleteUser(${u.id})">Delete</button>`
+      `<td>${isLastAdmin
+        ? '<span style="color:#555">protected</span>'
+        : `<button class="btn-del" onclick="deleteUser(${u.id})">Delete</button>`
       }</td>`;
     userTableBody.appendChild(tr);
   });

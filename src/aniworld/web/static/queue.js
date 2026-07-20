@@ -195,6 +195,7 @@ function renderQueue(items) {
     }
 
     let errorsHtml = "";
+    let kinoxCaptchaUrl = "";
     if (item.errors) {
       let errors = [];
       try {
@@ -202,7 +203,15 @@ function renderQueue(items) {
           typeof item.errors === "string"
             ? JSON.parse(item.errors)
             : item.errors;
-      } catch (e) {}
+      } catch (e) { }
+      // Kinox (and only kinox) attaches a captcha_url to its errors: the title
+      // page to open and solve the captcha on before retrying.
+      for (let k = 0; k < errors.length; k++) {
+        if (errors[k] && errors[k].captcha_url) {
+          kinoxCaptchaUrl = errors[k].captcha_url;
+          break;
+        }
+      }
       if (errors.length) {
         const errId = "qerr-" + item.id;
         let details = "";
@@ -229,6 +238,22 @@ function renderQueue(items) {
       }
     }
 
+    // Kinox-only captcha helper: a link to solve the captcha on the kinox title
+    // page and a retry button. Shown only when a kinox download set captcha_url.
+    let kinoxCaptchaHtml = "";
+    if (kinoxCaptchaUrl) {
+      kinoxCaptchaHtml =
+        '<div class="queue-captcha-solve">' +
+        '<span class="queue-captcha-note">Kinox requires solving a captcha for this title.</span>' +
+        '<a class="queue-captcha-link" href="' +
+        escQ(kinoxCaptchaUrl) +
+        '" target="_blank" rel="noopener noreferrer">&#128274; Solve on Kinox</a>' +
+        '<button class="queue-retry-btn" onclick="retryQueueItem(' +
+        item.id +
+        ')">&#8635; Retry</button>' +
+        "</div>";
+    }
+
     let actionBtn = "";
     if (item.status === "queued") {
       actionBtn =
@@ -244,8 +269,8 @@ function renderQueue(items) {
     } else if (item.status === "running") {
       const captchaBtn = item.captcha_url
         ? '<button class="queue-captcha-btn" onclick="openCaptchaModal(' +
-          item.id +
-          ')" title="Solve captcha">&#128274; Solve</button>'
+        item.id +
+        ')" title="Solve captcha">&#128274; Solve</button>'
         : '';
       actionBtn =
         captchaBtn +
@@ -299,6 +324,7 @@ function renderQueue(items) {
       "</div>" +
       progressHtml +
       errorsHtml +
+      kinoxCaptchaHtml +
       "</div>";
   });
 
@@ -334,6 +360,21 @@ async function cancelQueueItem(id) {
     } else {
       if (typeof showToast === "function")
         showToast("Cancelling after current episode...");
+    }
+    loadQueue();
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+async function retryQueueItem(id) {
+  try {
+    const resp = await fetch("/api/queue/" + id + "/retry", { method: "POST" });
+    const data = await resp.json();
+    if (data.error) {
+      if (typeof showToast === "function") showToast(data.error);
+    } else if (typeof showToast === "function") {
+      showToast("Retrying download...");
     }
     loadQueue();
   } catch (e) {
@@ -456,7 +497,7 @@ function closeCaptchaModal() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ x, y }),
-    }).catch(function () {});
+    }).catch(function () { });
   });
 })();
 

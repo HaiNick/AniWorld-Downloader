@@ -2,51 +2,50 @@
 
 # AniWorld Downloader v4
 
-AniWorld Downloader is a cross-platform tool for streaming and downloading anime from aniworld.to, as well as series from s.to. It runs on Windows, macOS, and Linux, providing a seamless experience for offline viewing or instant playback.
+AniWorld Downloader is a cross-platform tool for streaming and downloading content from AniWorld, Hanime, MangaFire, MegaKino, and SerienStream, with more support coming in the future. It runs on Windows, macOS, and Linux, providing a seamless experience for offline viewing or instant playback.
 
 ![GitHub Release](https://img.shields.io/github/v/release/phoenixthrush/AniWorld-Downloader)
 [![PyPI Downloads](https://static.pepy.tech/badge/aniworld)](https://pepy.tech/projects/aniworld)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/aniworld)
+[![Docker Image Size](https://ghcr-badge.egpl.dev/phoenixthrush/aniworld-downloader/size)](https://github.com/phoenixthrush/AniWorld-Downloader/pkgs/container/aniworld-downloader)
 ![GitHub License](https://img.shields.io/github/license/phoenixthrush/AniWorld-Downloader)
 ![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/phoenixthrush/AniWorld-Downloader)
+[![PayPal Donate](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://www.paypal.com/paypalme/justnekochan)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white)](https://discord.gg/BfDvrKd8V5)
 ![GitHub Repo stars](https://img.shields.io/github/stars/phoenixthrush/AniWorld-Downloader)
 ![GitHub forks](https://img.shields.io/github/forks/phoenixthrush/AniWorld-Downloader)
 
-Menu | WebUI (AniWorld) | WebUI (SerienStream)
-:-------------------------:|:-------------------------:|:-------------------------:
-![AniWorld Downloader - Demo](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/.github/assets/demo.png?raw=true) | ![AniWorld Downloader - Demo](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/.github/assets/demo-aniworld.png?raw=true) | ![AniWorld Downloader - Demo](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/.github/assets/demo-serienstream.png?raw=true)
+Demo Menu
+:-------------------------:
+![Menu Demo](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/.github/assets/demo.png?raw=true)
+
+https://github.com/user-attachments/assets/d65c4a5c-827a-45d7-a904-78977fd9aef4
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## TL;DR - Quick Start
 
 ```bash
-# Install stable release
+# Install stable release (needs Python installed)
 pip install -U aniworld
 
-# Or install latest GitHub commit
+# Or install latest GitHub commit (needs Git installed)
 pip install --upgrade git+https://github.com/phoenixthrush/AniWorld-Downloader.git@models#egg=aniworld
 
-# Launch AniWorld Downloader
-aniworld
-
-# Using WebUI
+# Launch AniWorld Downloader using Web UI
 aniworld -w
+
+# Using Menu
+aniworld
 ```
 
 > **Tip**: Use the stable release for general use. The GitHub version includes the latest features and fixes but may be less stable.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Still in Development
+## Documentation
 
-This project is actively being improved. Current work in progress includes:
-
-- [ ] Split Web UI SSO dependencies into separate `extras` section
-- [ ] Implement `keep-watching` argument for continuous playback
-- [ ] Review and optimize dependency manager on Windows
-- [ ] Fix Nuitka build crash: use Python 3.12 (non-MSVC builds unsupported on newer versions)
-- [ ] Remove empty lines below actions when running `docker run -it`
+For full user guides, tutorials, and troubleshooting, visit the [official documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -61,7 +60,35 @@ This project is actively being improved. Current work in progress includes:
 - **AniSkip Integration** – Skip intros and outros on AniWorld for a smoother experience
 - **Group Watching** – Sync anime and series sessions with friends via **Syncplay**
 - **Web Interface** – Browse, download, and manage your queue with a modern web UI
+- **More Sites** – Also search and download from **Kinox**, **BurningSeries**, **FilmPalast**, and **Cineby**
+  > **Kinox is currently not recommended:** it demands a captcha for every download
+  > (the same one all visitors get) that can't be solved automatically. Downloads
+  > still run without errors — when kinox blocks one, the queue shows a **"Solve on
+  > Kinox"** button that opens the title page so you can solve the captcha and hit
+  > **Retry**. Prefer the other sites for now.
+  >
+  > **Cineby German audio is unreliable:** Cineby lists a German audio track for
+  > almost everything, so the downloader offers **German Dub** accordingly — but in
+  > practice those German tracks often just don't work. That's a problem with Cineby's
+  > own sources, not with the downloader, so expect to fall back to English fairly often.
+- **Planned Releases** – Queue titles that aren't out yet; they download automatically once available
+- **Discord Request Bot** – Let others request movies/series from Discord, with owner approval
+- **Interface Language** – Switch the whole UI between English and German
 - **Docker Ready** – Deploy easily using **Docker** or **Docker Compose**
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Still in Development
+
+This project is actively being improved. Current work in progress includes:
+
+- [ ] implement GLOBAL_SESSION imports lazy loading
+- [ ] fix episode download cleanup on KeyboardInterrupt in menu
+- [ ] add support for aniskip feature on IINA
+- [ ] Split Web UI SSO dependencies into separate `extras` section
+- [ ] Implement `keep-watching` argument for continuous playback
+- [ ] Fix Nuitka build crash: use Python 3.12 (non-MSVC builds unsupported on newer versions)
+- [ ] Remove empty lines below actions when running `docker run -it`
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -69,11 +96,11 @@ This project is actively being improved. Current work in progress includes:
 
 | Provider | Status | Last Tested |
 | --- | --- | --- |
-| VOE | ✅ Working | 02/26 |
+| VOE | ✅ Working | 07/26 |
 | Vidoza | ✅ Working | 02/26 |
 | Vidmoly | ✅ Working | 02/26 |
+| Doodstream | ✅ Working | 07/26 |
 | Filemoon | ❌ Broken | 02/26 |
-| Doodstream | ❌ Broken | 02/26 |
 | Hanime | ⏳ Not Implemented | — |
 | LoadX | ⏳ Not Implemented | — |
 | Luluvdo | ⏳ Not Implemented | — |
@@ -81,8 +108,8 @@ This project is actively being improved. Current work in progress includes:
 
 ### Currently Prioritized Providers
 
-- **AniWorld** – VOE, Filemoon, Vidmoly
-- **SerienStream** – VOE, Vidoza
+- **AniWorld** – VOE, Vidmoly, Vidoza, Doodstream
+- **SerienStream** – VOE, Vidoza, Doodstream
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -148,12 +175,6 @@ docker-compose down
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Documentation
-
-For full user guides, tutorials, and troubleshooting, visit the [official documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 ## Contributing
 
 Contributions to AniWorld Downloader are **highly appreciated**! You can help improve the project in several ways:
@@ -181,33 +202,44 @@ Before submitting contributions, please check the repository for existing issues
 
 ## Dependencies
 
-AniWorld Downloader uses a small set of Python packages for networking, terminal UI, media handling, web features, authentication, and configuration.
+AniWorld Downloader uses a small set of Python packages for networking, terminal UI, media handling, web features, and configuration.
 
 ### Core dependencies
 
-- **niquests** – HTTP requests
+- **niquests** – HTTP requests (replaces `requests`)
 - **npyscreen** – Text-based terminal UI
 - **ffmpeg-python** – Python bindings for FFmpeg (requires FFmpeg installed on your system)
 - **python-dotenv** – Loads environment variables from a `.env` file
-- **rich** – Styled terminal output
-- **fake-useragent** – Generates user-agent strings
 - **packaging** – Version parsing and comparison
 - **cryptography** – Cryptographic utilities
 - **patchright** – Browser automation support for captcha handling
 
 ### Web / server dependencies
 
-- **requests** – Standard HTTP library
 - **flask** – Web framework
 - **flask-wtf** – Forms and CSRF protection for Flask
-- **authlib** – OAuth and authentication helpers
 - **waitress** – Production WSGI server
+
+### Optional dependencies (Extras)
+
+Some features require optional packages which can be installed on demand:
+- **SSO Login (OIDC):** Requires `authlib` (`pip install aniworld[sso]`)
+- **Discord Bot:** Requires `discord.py` (`pip install aniworld[discord]`)
+
+To install AniWorld Downloader with **all** optional features:
+```bash
+# For PyPI release
+pip install aniworld[all]
+
+# For local development
+pip install -e .[all]
+```
 
 ### Platform-specific dependencies
 
 - **windows-curses** – Enables curses support for `npyscreen` on Windows (installed only on Windows and only for Python versions below 3.14)
 
-All dependencies are installed automatically when AniWorld Downloader is installed with `pip`.
+All core and web dependencies are installed automatically when AniWorld Downloader is installed with `pip`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -215,11 +247,13 @@ All dependencies are installed automatically when AniWorld Downloader is install
 
 AniWorld Downloader builds upon the work of several outstanding open-source projects:
 
-- **[mpv](https://github.com/mpv-player/mpv.git)** – A versatile media player used for seamless video streaming
-- **[IINA](https://github.com/iina/iina.git)** – Modern macOS media player built on mpv, offering a sleek interface and advanced playback features
+- **[mpv](https://github.com/mpv-player/mpv)** – A versatile media player used for seamless video streaming
+- **[IINA](https://github.com/iina/iina)** – Modern macOS media player built on mpv, offering a sleek interface and advanced playback features
 - **[Syncplay](https://github.com/Syncplay/syncplay.git)** – Enables synchronized playback sessions with friends
 - **[Anime4K](https://github.com/bloc97/Anime4K)** – Real-time upscaler for enhancing anime video quality
 - **[Aniskip](https://api.aniskip.com/api-docs)** – Provides opening and ending skip times for the Aniskip extension
+- **[flag-icons](https://github.com/lipis/flag-icons)** – Collection of SVG country flags
+- **[new-domain-check](https://github.com/Yezun-hikari/new-domain-check)** – Constant checks for new redirects on megakino
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -264,7 +298,13 @@ If you have concerns about specific content, **contact the relevant website owne
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=phoenixthrush/AniWorld-Downloader&type=Date)](https://star-history.com/#phoenixthrush/AniWorld-Downloader&Date)
+<a href="https://www.star-history.com/?type=date&repos=phoenixthrush%2FAniWorld-Downloader">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=phoenixthrush/AniWorld-Downloader&type=date&theme=dark&legend=top-left&sealed_token=2w3mvLwCvYdC3Bq9vEfw-I3us7ocvtgOppVR5_etK2ZoymoZesVxuElMPDB0v_x46GEhBSkjWsN6bgleOwD5k0xC-LI-o4eh1Cq4iJAIRP-GBwweIiP7UqcOt7Vn9BjC_-Wv0iuJbxmfs8Xn2QAiwgq0TuOu5LLJkkbTleDugs-IwWF7ZYz5hvUPkc6-" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=phoenixthrush/AniWorld-Downloader&type=date&legend=top-left&sealed_token=2w3mvLwCvYdC3Bq9vEfw-I3us7ocvtgOppVR5_etK2ZoymoZesVxuElMPDB0v_x46GEhBSkjWsN6bgleOwD5k0xC-LI-o4eh1Cq4iJAIRP-GBwweIiP7UqcOt7Vn9BjC_-Wv0iuJbxmfs8Xn2QAiwgq0TuOu5LLJkkbTleDugs-IwWF7ZYz5hvUPkc6-" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=phoenixthrush/AniWorld-Downloader&type=date&legend=top-left&sealed_token=2w3mvLwCvYdC3Bq9vEfw-I3us7ocvtgOppVR5_etK2ZoymoZesVxuElMPDB0v_x46GEhBSkjWsN6bgleOwD5k0xC-LI-o4eh1Cq4iJAIRP-GBwweIiP7UqcOt7Vn9BjC_-Wv0iuJbxmfs8Xn2QAiwgq0TuOu5LLJkkbTleDugs-IwWF7ZYz5hvUPkc6-" />
+ </picture>
+</a>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

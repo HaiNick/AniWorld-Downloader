@@ -3,8 +3,18 @@ from .aniworld_to import (
     AniworldSeason,
     AniworldSeries,
 )
-from .hanime_tv import HanimeTVEpisode
+from .burningseries import (
+    BurningSeriesEpisode,
+    BurningSeriesSeason,
+    BurningSeriesSeries,
+)
+from .cineby import CinebyEpisode, CinebySeason, CinebySeries
+from .filmpalast_to import FilmPalastEpisode
+from .hanime_tv import HanimeTVEpisode, HanimeTVSeason, HanimeTVSeries
 from .hianime_to import HiAnimeEpisode, HiAnimeSeason, HiAnimeSeries
+from .kinox import KinoxEpisode, KinoxSeason, KinoxSeries
+from .mangafire_to.series import MangaFireToChapter, MangaFireToPage, MangaFireToSeries
+from .megakino import MegaKinoEpisode
 from .s_to import SerienstreamEpisode, SerienstreamSeason, SerienstreamSeries
 
 __all__ = [
@@ -12,10 +22,26 @@ __all__ = [
     "AniworldSeason",
     "AniworldEpisode",
     "HanimeTVEpisode",
+    "HanimeTVSeason",
+    "HanimeTVSeries",
+    "MangaFireToSeries",
+    "MangaFireToChapter",
+    "MangaFireToPage",
     "SerienstreamSeries",
     "SerienstreamSeason",
     "SerienstreamEpisode",
     "HiAnimeSeries",
     "HiAnimeSeason",
     "HiAnimeEpisode",
+    "MegaKinoEpisode",
+    "FilmPalastEpisode",
+    "KinoxSeries",
+    "KinoxSeason",
+    "KinoxEpisode",
+    "BurningSeriesSeries",
+    "BurningSeriesSeason",
+    "BurningSeriesEpisode",
+    "CinebySeries",
+    "CinebySeason",
+    "CinebyEpisode",
 ]

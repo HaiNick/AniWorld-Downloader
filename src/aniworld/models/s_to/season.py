@@ -1,7 +1,8 @@
 import re
 from urllib.parse import urljoin
 
-from ...config import GLOBAL_SESSION, SERIENSTREAM_SEASON_PATTERN, logger
+from ...config import SERIENSTREAM_SEASON_PATTERN, logger
+from .http import sto_get
 
 
 class SerienstreamSeason:
@@ -62,7 +63,7 @@ class SerienstreamSeason:
     @property
     def series(self):
         if self._series is None:
-            series_url = "-".join(self.url.split("-")[:-2])
+            series_url = self.url.rsplit("/staffel-", 1)[0]
             from .series import SerienstreamSeries
 
             self._series = SerienstreamSeries(series_url)
@@ -90,7 +91,7 @@ class SerienstreamSeason:
     def _html(self):
         if self.__html is None:
             logger.debug(f"fetching ({self.url})...")
-            resp = GLOBAL_SESSION.get(self.url)
+            resp = sto_get(self.url)
             self.__html = resp.text
         return self.__html
 

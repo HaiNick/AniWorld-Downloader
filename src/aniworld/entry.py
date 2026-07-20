@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from pathlib import Path
@@ -7,9 +8,7 @@ from .autodeps import ensure_patchright_chromium
 from .config import ACTION_METHODS, ANIWORLD_CONFIG_DIR, VERSION
 from .env import merge_env
 from .logger import get_logger
-from .menu import app
 from .providers import resolve_provider
-from .search import search
 
 merge_env(
     Path(__file__).resolve().parent / ".env.example",
@@ -17,6 +16,18 @@ merge_env(
 )
 
 logger = get_logger(__name__)
+
+
+def _enable_debug_logging_if_requested():
+    if "--debug" not in sys.argv and "-d" not in sys.argv:
+        return
+
+    os.environ["ANIWORLD_DEBUG_MODE"] = "1"
+    logger.setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.DEBUG)
+    for name in logging.Logger.manager.loggerDict:
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    logger.debug("Early debug mode enabled")
 
 
 def set_terminal_title():
@@ -39,14 +50,15 @@ def run_action(obj, action: str):
 def aniworld():
     """Main entry point"""
     try:
-        logger.debug("Starting...")
-        logger.info("Starting AniWorld-Downloader...")
+        _enable_debug_logging_if_requested()
+        logger.debug("Starting AniWorld-Downloader...")
         set_terminal_title()
-        logger.info("Checking dependencies...")
-        ensure_patchright_chromium()
-        logger.info("Dependencies OK")
-
         args = parse_args()
+
+        if not os.getenv("ANIWORLD_DOWNLOAD_PATH") == "/app/Downloads":
+            logger.debug("Checking dependencies...")
+            ensure_patchright_chromium()
+            logger.debug("Dependencies OK")
 
         if args.web_ui:
             from .web import start_web_ui
@@ -136,7 +148,12 @@ def aniworld():
                 run_action(obj, action)
             return 0
 
+        from .search import search
+
         url = args.url[0] if args.url else search()
+
+        # FIX: replace s.to with serienstream.to to avoid issues with s.to being down
+        url = url.replace("://s.to", "://serienstream.to")
 
         provider = resolve_provider(url)
 
@@ -170,6 +187,8 @@ def aniworld():
             return 0
 
         # AniWorld series -> show menu
+        from .menu import app
+
         result = app(url=url)
         if not result:
             return 130
