@@ -12,16 +12,13 @@ ARG https_proxy
 ARG no_proxy
 ARG TARGETARCH
 
-# Setup HTTPS sources for Debian, trust the proxy certificate if provided, and install upx-ucl (with caching)
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+# Setup HTTPS sources for Debian and trust the proxy certificate if provided
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
     if [ -n "$PROXY_CA_CERT_B64" ]; then \
         echo "Trusting custom proxy CA certificate..." && \
         echo "$PROXY_CA_CERT_B64" | base64 -d > /usr/local/share/ca-certificates/proxy-ca.crt && \
         update-ca-certificates; \
-    fi && \
-    apt-get update && apt-get install -y --no-install-recommends --option=Apt::Retries=3 upx-ucl
+    fi
 
 
 
@@ -34,8 +31,11 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip
 
-# Pre-install patchright and Chromium to cache this huge layer independently of the project's dependencies
-# This runs BEFORE copying any project files so that UPX compression is permanently cached.
+# Pre-install patchright and Chromium to cache this huge layer independently of the project's dependencies.
+# This runs BEFORE copying any project files so the browser layer is permanently cached.
+# NOTE: Do NOT symlink headless_shell -> chrome and do NOT UPX-compress browser binaries.
+# patchright validates browser binary hashes at startup; modified binaries fail the check,
+# causing it to delete the existing install and re-download, which fails in prod → no browser.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/ms-playwright \
@@ -43,17 +43,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m patchright install chromium && \
     rm -rf /ms-playwright/ffmpeg-* && \
     find /ms-playwright -name "*.pak*" | grep -vE "(resources|chrome_100|chrome_200|de|en-US|en-GB)\.pak" | xargs -r rm -f && \
-    headless_dir=$(ls -d /ms-playwright/chromium_headless_shell-* | head -n 1) && \
-    chrome_dir=$(ls -d /ms-playwright/chromium-* | grep -v headless_shell | head -n 1) && \
-    rm -rf "$headless_dir" && \
-    ln -s "$(basename "$chrome_dir")" "$headless_dir" && \
-    chrome_inner_dir=$(ls -d "$chrome_dir"/chrome-* | head -n 1) && \
-    ln -s chrome "$chrome_inner_dir/headless_shell" && \
-    arch=$(dpkg --print-architecture) && \
-    if [ "$arch" = "amd64" ]; then \
-        upx -9 /opt/venv/lib/python3.13/site-packages/patchright/driver/node; \
-        upx -9 "$chrome_inner_dir/chrome"; \
-    fi && \
     chmod -R a+rX /ms-playwright && \
     rm -rf /tmp/*
 

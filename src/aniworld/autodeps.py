@@ -469,10 +469,20 @@ def ensure_patchright_chromium():
     try:
         from patchright._impl._driver import compute_driver_executable, get_driver_env
 
-        os.environ.setdefault(
-            "PLAYWRIGHT_BROWSERS_PATH",
-            _default_playwright_browsers_path().resolve().as_posix(),
+        browsers_path = Path(
+            os.environ.setdefault(
+                "PLAYWRIGHT_BROWSERS_PATH",
+                _default_playwright_browsers_path().resolve().as_posix(),
+            )
         )
+
+        # Skip reinstall when chromium is already present (e.g. baked into a Docker image).
+        # Running 'install chromium' against modified or symlinked binaries can fail its
+        # integrity check, delete the existing install, then fail to re-download — leaving
+        # no browser at all.
+        if any(browsers_path.glob("chromium*")):
+            _log.debug("patchright chromium already present in %s", browsers_path)
+            return
 
         driver_executable, driver_cli = compute_driver_executable()
         driver_path = Path(driver_executable).resolve()
