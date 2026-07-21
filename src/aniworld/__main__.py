@@ -6,10 +6,16 @@
 # nuitka-project: --static-libpython=no
 # nuitka-project: --assume-yes-for-downloads
 # nuitka-project: --python-flag=-m
+# nuitka-project: --mode=app
+# nuitka-project: --output-filename=AniWorldDownloader
 
 # Include hidden imports (dynamically loaded modules that Nuitka can't detect)
 # nuitka-project: --include-package=urllib3.contrib
 # nuitka-project: --include-package=aniworld.extractors
+
+# Include Patchright's Node-based browser installer driver.
+# nuitka-project-set: patchright_driver = str(__import__("pathlib").Path(__import__("inspect").getfile(__import__("patchright"))).parent / "driver")
+# nuitka-project: --include-raw-dir={patchright_driver}=patchright/driver
 
 # Include data files/directories
 # nuitka-project: --include-data-dir=src/aniworld/web/templates=aniworld/web/templates
@@ -19,16 +25,14 @@
 # nuitka-project: --include-data-file=src/aniworld/aniskip/scripts/aniskip.lua=aniworld/aniskip/scripts/aniskip.lua
 # nuitka-project: --include-data-file=src/aniworld/aniskip/scripts/autoexit.lua=aniworld/aniskip/scripts/autoexit.lua
 # nuitka-project: --include-data-file=src/aniworld/aniskip/scripts/autostart.lua=aniworld/aniskip/scripts/autostart.lua
+# nuitka-project: --include-data-file=src/aniworld/browsers.jsonl=aniworld/browsers.jsonl
 
 # Platform-specific flags
 # nuitka-project-if: {OS} == "Darwin":
-#    nuitka-project: --standalone
-#    nuitka-project: --macos-create-app-bundle
 #    nuitka-project: --macos-app-name=AniWorld
 #    nuitka-project: --macos-app-icon=src/aniworld/nuitka/icon.webp
 
 # nuitka-project-if: {OS} in ("Windows", "Linux", "FreeBSD"):
-#    nuitka-project: --onefile
 #    nuitka-project: --windows-icon-from-ico=src/aniworld/nuitka/icon.webp
 
 # ========================
@@ -39,4 +43,10 @@ import sys
 
 from .entry import aniworld
 
-sys.exit(aniworld())
+
+def main():
+    return aniworld()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

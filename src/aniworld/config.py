@@ -7,11 +7,12 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import fake_useragent
+import random
+import certifi
 from niquests import Session
 from packaging.version import parse as parse_version
 
-from .env import merge_env
+from .env import initialize_app_env
 from .logger import get_logger
 
 VERSION = None
@@ -20,6 +21,11 @@ try:
     VERSION = version("aniworld")
 except PackageNotFoundError:
     VERSION = None
+
+CA_CERT_BUNDLE = certifi.where()
+os.environ.setdefault("SSL_CERT_FILE", CA_CERT_BUNDLE)
+os.environ.setdefault("REQUESTS_CA_BUNDLE", CA_CERT_BUNDLE)
+os.environ.setdefault("CURL_CA_BUNDLE", CA_CERT_BUNDLE)
 
 
 def get_latest_version():
@@ -52,13 +58,10 @@ def is_newest_version() -> bool:
     return parse_version(VERSION) >= parse_version(latest_version)
 
 
-# AniWorld configuration directory
-ANIWORLD_CONFIG_DIR = Path.home() / ".aniworld"
-
-# Load .env file whenever config is imported
-merge_env(
+# Resolve the app directory and load its .env file whenever config is imported.
+ANIWORLD_CONFIG_DIR = initialize_app_env(
     Path(__file__).resolve().parent / ".env.example",
-    ANIWORLD_CONFIG_DIR / ".env",
+    Path.home() / ".aniworld",
 )
 
 logger = get_logger(__name__)
@@ -99,13 +102,36 @@ def get_video_codec():
 
 # NIQUESTS
 
-try:
-    DEFAULT_USER_AGENT = str(
-        fake_useragent.UserAgent(os=["Windows", "Mac OS X"]).random
-    )
-except fake_useragent.errors.FakeUserAgentError:
-    # TODO: fix - currently happens on nuitka builds
-    DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+
+def _get_random_user_agent() -> str:
+    fallback = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+    jsonl_path = Path(__file__).parent / "browsers.jsonl"
+
+    if not jsonl_path.exists():
+        return fallback
+
+    valid_agents = []
+    try:
+        # Stream the file to avoid loading all 10,000 lines into memory
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                # Fast string pre-filter before expensive JSON parsing
+                if '"Windows"' in line or '"Mac OS X"' in line:
+                    data = json.loads(line)
+                    if data.get("os") in ("Windows", "Mac OS X"):
+                        ua = data.get("useragent")
+                        if ua:
+                            valid_agents.append(ua)
+
+        if valid_agents:
+            return random.choice(valid_agents)
+    except Exception:
+        pass
+
+    return fallback
+
+
+DEFAULT_USER_AGENT = _get_random_user_agent()
 
 LULUVDO_USER_AGENT = (
     "Mozilla/5.0 (Android 15; Mobile; rv:132.0) Gecko/132.0 Firefox/132.0"
@@ -120,7 +146,7 @@ LULUVDO_USER_AGENT = (
 # in another branch, but for now I just have to sit through the import time
 # every run, even though the actual fetch only takes about a second
 GLOBAL_SESSION = Session(
-    resolver=["doh+google://"],
+    resolver=["doh+cloudflare://"],
     disable_http3=True,
     multiplexed=False,
     headers={
@@ -135,6 +161,7 @@ GLOBAL_SESSION = Session(
         "Priority": "u=0, i",
     },
 )
+GLOBAL_SESSION.verify = CA_CERT_BUNDLE
 
 logger.debug("Config initialized successfully")
 logger.debug(
@@ -150,7 +177,7 @@ SUPPORTED_PROVIDERS = (
     "Vidmoly",
     "Vidoza",
     "Doodstream",
-    # "Filemoon",
+    "Filemoon",
     # "LoadX",
     # "Luluvdo",
     # "Streamtape",
@@ -415,7 +442,7 @@ HIANIME_SEASON_PATTERN = re.compile(r"", re.IGNORECASE)
 HIANIME_EPISODE_PATTERN = re.compile(r"", re.IGNORECASE)
 
 MEGAKINO_SERIES_PATTERN = re.compile(
-    r"^https?://(?:www\.)?megakino[\w-]*\.[^/]+/(?:action|films|serials)/[^?#]+(?:\.html)?/?$",
+    r"^https?://(?:www\.)?megakino[\w-]*\.[^/]+/(?:action|films|serials)/[^?#]+(?:\.html)?/?(?:#mkep=\d+)?$",
     re.IGNORECASE,
 )
 

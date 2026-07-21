@@ -1,6 +1,6 @@
 [project]
 name = "aniworld"
-version = "4.8.0"
+version = "4.8.5"
 authors = [{ name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" }]
 maintainers = [
   { name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" },
@@ -10,12 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 # requires version numbers from 06/2026
 dependencies = [
+  "certifi",                                                                  # CA bundle for bundled runtimes
   "niquests",                                                                 # >=3.7
   "npyscreen",                                                                # >=3.7
   "ffmpeg-python",                                                            # ???
   "python-dotenv",                                                            # >=3.10
   "rich",                                                                     # >=3.9.0
-  "fake-useragent",                                                           # >=3.9
   "flask",                                                                    # >=3.9
   "flask-wtf",                                                                # >=3.10
   "waitress",                                                                 # >=3.9.0
@@ -50,7 +50,7 @@ all = [
 [project.urls]
 homepage = "https://github.com/phoenixthrush/AniWorld-Downloader"
 changelog = "https://github.com/phoenixthrush/AniWorld-Downloader/commits/models"
-documentation = "https://readthedocs.org"
+documentation = "https://www.phoenixthrush.com/AniWorld-Downloader-Docs/"
 bugs = "https://github.com/phoenixthrush/AniWorld-Downloader/issues"
 issues = "https://github.com/phoenixthrush/AniWorld-Downloader/issues"
 tracker = "https://github.com/phoenixthrush/AniWorld-Downloader/issues"
@@ -62,10 +62,17 @@ discord = "https://discord.com/invite/BfDvrKd8V5"
 
 [tool.setuptools.package-data]
 aniworld = [
+  ".env.example",
+  "ascii/ASCII.txt",
+  "aniskip/scripts/*.lua",
   "web/templates/*.html",
   "web/static/*.css",
   "web/static/*.js",
+  "web/static/*.ico",
+  "web/static/*.png",
+  "web/static/*.webp",
   "web/static/flags/*.svg",
+  "browsers.jsonl",
 ]
 
 [project.scripts]

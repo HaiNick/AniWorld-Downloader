@@ -202,6 +202,32 @@ def _remove_empty_dirs(folder_path, base_folder, protected=None):
             pass
 
 
+def _cleanup_episode_download(self):
+    """Remove partial files left by an interrupted or failed episode download."""
+    for suffix in (
+        ".temp_full.mkv",
+        ".temp_audio.mkv",
+        ".temp_video.mkv",
+        ".temp_full.seg.ts",
+        ".new.mkv",
+        ".convert.mkv",
+        ".convert.mp4",
+    ):
+        try:
+            self._episode_path.with_suffix(suffix).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    try:
+        from .hls import cleanup_temp_files
+
+        for suffix in (".temp_full.mkv", ".temp_audio.mkv"):
+            temp_path = self._episode_path.with_suffix(suffix)
+            cleanup_temp_files(temp_path.with_suffix(".hlswork"))
+    except (ImportError, OSError):
+        pass
+
+
 def _reset_provider_resolution_cache(self):
     for attr in list(vars(self)):
         if attr.endswith("__redirect_url") or attr.endswith("__provider_url"):
@@ -486,7 +512,7 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
                 elif is_tty:
                     _print_cli_progress(percent, cur_time_str, cur_speed_str, label)
 
-                # --- stall detection ---
+                # --- stall and force cancel detection ---
                 if cur_frame != last_frame or cur_time != last_time:
                     last_frame = cur_frame
                     last_time = cur_time
@@ -498,6 +524,20 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
                     )
                     process.kill()
                     break
+
+                try:
+                    from ...web.db import is_queue_force_cancelled
+                    from ...playwright.captcha import _local
+
+                    qid = getattr(_local, "queue_id", None)
+                    if qid is not None and is_queue_force_cancelled(qid):
+                        logger.warning(
+                            "[FFmpeg] Force cancel requested. Killing process."
+                        )
+                        process.kill()
+                        break
+                except Exception:
+                    pass
             elif line_str:
                 # Try to capture total duration from ffmpeg header
                 if total_duration == 0.0:
@@ -513,6 +553,18 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
             sys.stderr.write("\r" + " " * 120 + "\r")
             sys.stderr.flush()
 
+    except KeyboardInterrupt:
+        try:
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        except OSError:
+            pass
+        reader_thread.join(timeout=5)
+        raise
     finally:
         with _ffmpeg_progress_lock:
             _ffmpeg_progress.update(
@@ -1230,18 +1282,35 @@ def download(self):
 
                 return
 
+            except KeyboardInterrupt:
+                _cleanup_episode_download(self)
+                _remove_empty_dirs(
+                    self._folder_path,
+                    self._base_folder,
+                    protected=getattr(self, "selected_path", None),
+                )
+                raise
+
             except Exception as e:
-                for suffix in (
-                    ".temp_full.mkv",
-                    ".temp_audio.mkv",
-                    ".temp_video.mkv",
-                    ".new.mkv",
-                    ".convert.mkv",
-                    ".convert.mp4",
-                ):
-                    temp = self._episode_path.with_suffix(suffix)
-                    if temp.exists():
-                        temp.unlink()
+                _cleanup_episode_download(self)
+
+                try:
+                    from ...web.db import is_queue_force_cancelled
+                    from ...playwright.captcha import _local
+
+                    qid = getattr(_local, "queue_id", None)
+                    if qid is not None and is_queue_force_cancelled(qid):
+                        if self._episode_path.exists():
+                            self._episode_path.unlink()
+                        _remove_empty_dirs(
+                            self._folder_path,
+                            self._base_folder,
+                            protected=getattr(self, "selected_path", None),
+                        )
+                        raise e
+                except Exception as inner_e:
+                    if inner_e is e:
+                        raise
 
                 provider_errors[provider_name] = e
                 logger.warning(

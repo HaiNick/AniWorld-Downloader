@@ -480,6 +480,7 @@ const PATH_SITE_OPTIONS = [
   ["filmpalast", "FilmPalast"],
   ["mangafire", "MangaFire"],
   ["htv", "Hanime"],
+  ["cineby", "Cineby"],
 ];
 
 function renderCustomPaths(paths) {

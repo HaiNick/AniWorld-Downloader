@@ -9,6 +9,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 from flask_wtf.csrf import CSRFProtect
 
 from ..config import (
+    ANIWORLD_CONFIG_DIR,
     LANG_KEY_MAP,
     LANG_LABELS,
     SUPPORTED_PROVIDERS,
@@ -45,6 +46,8 @@ from .db import (
     update_custom_path,
     add_to_queue,
     cancel_queue_item,
+    force_cancel_queue_item,
+    is_queue_force_cancelled,
     clear_captcha_url,
     clear_completed,
     find_autosync_by_url,
@@ -243,7 +246,7 @@ def _apply_discord_settings(payload, env_updates):
 
 
 def _persist_discord_env(env_updates):
-    """Persist only the Discord bot keys to ~/.aniworld/.env.
+    """Persist only the Discord bot keys to the app's .env file.
 
     Every other web-UI setting is intentionally in-memory only (see
     api_settings_update). The bot config is the one exception: a token that
@@ -256,11 +259,9 @@ def _persist_discord_env(env_updates):
     if not subset:
         return
     try:
-        from pathlib import Path
-
         from ..env import persist_env_values
 
-        env_path = Path.home() / ".aniworld" / ".env"
+        env_path = ANIWORLD_CONFIG_DIR / ".env"
         persist_env_values(env_path, subset)
     except Exception as exc:
         logger.warning(f"Could not persist Discord settings to .env: {exc}")
@@ -311,6 +312,9 @@ STO_LANGUAGE_BADGE_ORDER = (
 def _episode_language_labels(provider_data):
     labels = []
     seen = set()
+
+    if not provider_data:
+        return labels
 
     if hasattr(provider_data, "_data"):
         lang_tuple_to_label = {}
@@ -542,7 +546,9 @@ def _queue_worker():
                         chapter_url = (ep_url.get("url") or "").strip()
                         series_url = (ep_url.get("series_url") or "").strip() or None
                         selected_pages = ep_url.get("selected_pages")
-                        mangafire_format = ep_url.get("mangafire_format", mangafire_format)
+                        mangafire_format = ep_url.get(
+                            "mangafire_format", mangafire_format
+                        )
                     prov = resolve_provider(chapter_url)
                     if prov.name == "MangaFire":
                         if not series_url:
@@ -599,7 +605,12 @@ def _queue_worker():
 
                 # Check for cancellation after each episode
                 if is_queue_cancelled(item["id"]):
-                    logger.info(f"Download cancelled for queue item {item['id']}")
+                    if is_queue_force_cancelled(item["id"]):
+                        logger.info(
+                            f"Download force cancelled for queue item {item['id']}"
+                        )
+                    else:
+                        logger.info(f"Download cancelled for queue item {item['id']}")
                     update_queue_progress(item["id"], i + 1, "")
                     break
 
@@ -751,10 +762,10 @@ def _run_autosync_for_job(job):
             # Collect all episode URLs that are NOT yet downloaded
             missing_episodes = []
             lang_total_found = 0
-            
+
             for season in series.seasons:
                 season_obj = prov.season_cls(url=season.url, series=series)
-                
+
                 ep_lang_map = {}
                 if hasattr(season_obj, "_html"):
                     html = season_obj._html
@@ -770,10 +781,10 @@ def _run_autosync_for_job(job):
                             if tr_start == -1 or tr_end == -1:
                                 pos += len(marker)
                                 continue
-                            
+
                             tr_html = html[tr_start:tr_end]
                             ep_url = None
-                            
+
                             url_pos = tr_html.find('itemprop="url"')
                             if url_pos != -1:
                                 h_start = tr_html.find('href="', url_pos) + 6
@@ -787,23 +798,29 @@ def _run_autosync_for_job(job):
                                     h_start = tr_html.rfind('href="', 0, href_pos) + 6
                                     h_end = tr_html.find('"', h_start)
                                     ep_url = tr_html[h_start:h_end]
-                                    
+
                             if ep_url:
                                 from urllib.parse import urlparse
-                                ep_url = urlparse(ep_url).path.rstrip('/')
+
+                                ep_url = urlparse(ep_url).path.rstrip("/")
                                 lgs = set()
-                                if "/german.svg" in tr_html: lgs.add("German Dub")
-                                if "/japanese-german.svg" in tr_html: lgs.add("German Sub")
-                                if "/japanese-english.svg" in tr_html: lgs.add("English Sub")
-                                if "/english.svg" in tr_html: lgs.add("English Dub")
+                                if "/german.svg" in tr_html:
+                                    lgs.add("German Dub")
+                                if "/japanese-german.svg" in tr_html:
+                                    lgs.add("German Sub")
+                                if "/japanese-english.svg" in tr_html:
+                                    lgs.add("English Sub")
+                                if "/english.svg" in tr_html:
+                                    lgs.add("English Dub")
                                 ep_lang_map[ep_url] = lgs
-                            
+
                             pos = tr_end
-                                
+
                 for ep in season_obj.episodes:
                     if ep_lang_map:
                         from urllib.parse import urlparse
-                        ep_path = urlparse(ep.url).path.rstrip('/')
+
+                        ep_path = urlparse(ep.url).path.rstrip("/")
                         lgs = ep_lang_map.get(ep_path)
                         if lgs is not None and target_lang not in lgs:
                             continue
@@ -1050,6 +1067,7 @@ def _hanime_fallback_title(url: str) -> str:
 def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     app = Flask(__name__)
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000
     app_version = _get_version()
 
     base_url = os.environ.get("ANIWORLD_WEB_BASE_URL", "").strip().rstrip("/")
@@ -1181,6 +1199,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         response.headers.setdefault(
             "Referrer-Policy", "strict-origin-when-cross-origin"
         )
+        if request.path.startswith("/api/"):
+            response.headers.setdefault(
+                "Cache-Control", "no-store, no-cache, must-revalidate"
+            )
         return response
 
     @app.before_request
@@ -1195,6 +1217,17 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                     return jsonify(
                         {"error": "Content-Type must be application/json"}
                     ), 415
+
+    @app.route("/favicon.ico")
+    def favicon():
+        import os
+        from flask import send_from_directory
+
+        return send_from_directory(
+            os.path.join(app.root_path, "static"),
+            "favicon.png",
+            mimetype="image/png",
+        )
 
     @app.route("/")
     def index():
@@ -1392,6 +1425,26 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         try:
             prov = resolve_provider(url)
             if prov.name in ("MegaKino", "FilmPalast"):
+                # MegaKino serials list many episodes on one page; surface them
+                # as a single season with the real episode count.
+                if prov.name == "MegaKino" and "/serials/" in url.lower():
+                    try:
+                        mk = prov.episode_cls(url=url)
+                        if mk.is_series:
+                            return jsonify(
+                                {
+                                    "seasons": [
+                                        {
+                                            "url": url,
+                                            "season_number": 1,
+                                            "episode_count": len(mk.series_episodes),
+                                            "are_movies": False,
+                                        }
+                                    ]
+                                }
+                            )
+                    except Exception as exc:
+                        logger.warning(f"MegaKino series detection failed: {exc}")
                 return jsonify(
                     {
                         "seasons": [
@@ -1445,6 +1498,21 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
             if prov.name in ("MegaKino", "FilmPalast"):
                 episode = prov.episode_cls(url=url, selected_language="German Dub")
+                if prov.name == "MegaKino" and episode.is_series:
+                    episodes_data = [
+                        {
+                            "url": f"{url}#mkep={ep['number']}",
+                            "episode_number": ep["number"],
+                            "title_de": "",
+                            "title_en": ep["label"] or f"Episode {ep['number']}",
+                            "downloaded": False,
+                            "available_languages": ["German Dub"]
+                            if ep["providers"]
+                            else [],
+                        }
+                        for ep in episode.series_episodes
+                    ]
+                    return jsonify({"episodes": episodes_data})
                 title = getattr(episode, "title_cleaned", None) or getattr(
                     episode, "title", ""
                 )
@@ -1715,6 +1783,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             else:
                 episode = prov.episode_cls(url=url)
             pd = episode.provider_data
+            if pd is None:
+                return jsonify({"providers": {}})
 
             disable_eng_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0") == "1"
             provider_info = {}
@@ -1767,7 +1837,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         provider = data.get("provider", "VOE")
         title = data.get("title", "Unknown")
         series_url = data.get("series_url", "")
-        mangafire_format = data.get("mangafire_format") or os.environ.get("MANGAFIRE_FORMAT", "jpg")
+        mangafire_format = data.get("mangafire_format") or os.environ.get(
+            "MANGAFIRE_FORMAT", "jpg"
+        )
 
         if provider == "MangaFire":
             for i, ep in enumerate(episodes):
@@ -1835,6 +1907,13 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
     @app.route("/api/queue/<int:queue_id>/cancel", methods=["POST"])
     def api_queue_cancel(queue_id):
         ok, err = cancel_queue_item(queue_id)
+        if not ok:
+            return jsonify({"error": err}), 400
+        return jsonify({"ok": True})
+
+    @app.route("/api/queue/<int:queue_id>/force_cancel", methods=["POST"])
+    def api_queue_force_cancel(queue_id):
+        ok, err = force_cancel_queue_item(queue_id)
         if not ok:
             return jsonify({"error": err}), 400
         return jsonify({"ok": True})
@@ -1927,9 +2006,12 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         import platform
         from pathlib import Path
 
-        env_path = Path.home() / ".aniworld" / ".env"
+        env_path = ANIWORLD_CONFIG_DIR / ".env"
         if platform.system() != "Windows":
-            display = "~/.aniworld/.env"
+            try:
+                display = f"~/{env_path.relative_to(Path.home())}"
+            except ValueError:
+                display = str(env_path)
         else:
             display = str(env_path)
         return render_template("settings.html", env_path=display)
@@ -1954,8 +2036,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if not target or not target.startswith(("http://", "https://")):
             return "", 400
         try:
-            from ..config import GLOBAL_SESSION
-            proxy_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            from ..config import GLOBAL_SESSION, DEFAULT_USER_AGENT
+
+            proxy_headers = {"User-Agent": DEFAULT_USER_AGENT}
             if "hanime" in target:
                 proxy_headers["Referer"] = "https://hanime.tv/"
             resp = GLOBAL_SESSION.get(target, headers=proxy_headers, timeout=10)
