@@ -146,8 +146,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-# Ensure Downloads and configuration paths are writable by the unprivileged user
-RUN chown -R aniworld:aniworld /app/Downloads /home/aniworld/.aniworld
+# Ensure Downloads, config, and browser dirs are writable by the unprivileged user.
+# /ms-playwright needs write access so patchright can verify/update its install
+# at runtime without blocking startup with a failing subprocess call.
+RUN chown -R aniworld:aniworld /app/Downloads /home/aniworld/.aniworld /ms-playwright
 
 USER aniworld
 
