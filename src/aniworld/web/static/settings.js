@@ -1,6 +1,7 @@
 // Download path settings
 const downloadPathInput = document.getElementById("downloadPath");
 const seriesDownloadPathInput = document.getElementById("seriesDownloadPath");
+const movieDownloadPathInput = document.getElementById("movieDownloadPath");
 const langSeparationCb = document.getElementById("langSeparation");
 const disableEnglishSubCb = document.getElementById("disableEnglishSub");
 const enableHtvCb = document.getElementById("enableHtv");
@@ -21,6 +22,8 @@ async function loadSettings() {
     downloadPathInput.value = data.download_path || "";
     if (seriesDownloadPathInput)
       seriesDownloadPathInput.value = data.series_download_path || "";
+    if (movieDownloadPathInput)
+      movieDownloadPathInput.value = data.movie_download_path || "";
     if (langSeparationCb)
       langSeparationCb.checked = data.lang_separation === "1";
     if (disableEnglishSubCb)
@@ -370,6 +373,25 @@ async function saveSeriesDownloadPath() {
       return;
     }
     showToast("Series download path saved");
+  } catch (e) {
+    showToast("Failed to save settings: " + e.message);
+  }
+}
+
+async function saveMovieDownloadPath() {
+  const movie_download_path = movieDownloadPathInput.value.trim();
+  try {
+    const resp = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ movie_download_path }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast(data.error);
+      return;
+    }
+    showToast("Movie download path saved");
   } catch (e) {
     showToast("Failed to save settings: " + e.message);
   }

@@ -245,6 +245,27 @@ def _apply_discord_settings(payload, env_updates):
     return None
 
 
+_PATH_ENV_KEYS = frozenset({
+    "ANIWORLD_DOWNLOAD_PATH",
+    "ANIWORLD_SERIES_DOWNLOAD_PATH",
+    "ANIWORLD_MOVIE_DOWNLOAD_PATH",
+})
+
+
+def _persist_path_settings(env_updates):
+    """Persist download-path keys to the .env file so they survive restarts."""
+    subset = {k: v for k, v in env_updates.items() if k in _PATH_ENV_KEYS}
+    if not subset:
+        return
+    try:
+        from ..env import persist_env_values
+
+        env_path = ANIWORLD_CONFIG_DIR / ".env"
+        persist_env_values(env_path, subset)
+    except Exception as exc:
+        logger.warning(f"Could not persist path settings to .env: {exc}")
+
+
 def _persist_discord_env(env_updates):
     """Persist only the Discord bot keys to the app's .env file.
 
@@ -2248,6 +2269,15 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         else:
             series_resolved = ""
 
+        movie_raw = os.environ.get("ANIWORLD_MOVIE_DOWNLOAD_PATH", "")
+        if movie_raw:
+            mp = Path(movie_raw).expanduser()
+            if not mp.is_absolute():
+                mp = Path.home() / mp
+            movie_resolved = str(mp)
+        else:
+            movie_resolved = ""
+
         lang_separation = os.environ.get("ANIWORLD_LANG_SEPARATION", "0")
         disable_english_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0")
         sync_schedule = os.environ.get("ANIWORLD_SYNC_SCHEDULE", "0")
@@ -2268,6 +2298,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             {
                 "download_path": resolved,
                 "series_download_path": series_resolved,
+                "movie_download_path": movie_resolved,
                 "lang_separation": lang_separation,
                 "disable_english_sub": disable_english_sub,
                 "enable_htv": enable_htv,
@@ -2303,6 +2334,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             env_updates["ANIWORLD_DOWNLOAD_PATH"] = str(data["download_path"]).strip()
         if "series_download_path" in data:
             env_updates["ANIWORLD_SERIES_DOWNLOAD_PATH"] = str(data["series_download_path"]).strip()
+        if "movie_download_path" in data:
+            env_updates["ANIWORLD_MOVIE_DOWNLOAD_PATH"] = str(data["movie_download_path"]).strip()
         if "lang_separation" in data:
             env_updates["ANIWORLD_LANG_SEPARATION"] = (
                 "1" if data["lang_separation"] else "0"
@@ -2392,14 +2425,13 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             if error:
                 return jsonify({"error": error}), 400
 
-        # Settings are intentionally in-memory only for the running process.
-        # To persist across restarts, users set them in their .env file.
         for key, value in env_updates.items():
             os.environ[key] = value
 
+        # Path settings are persisted so they survive container restarts.
+        _persist_path_settings(env_updates)
+
         if "discord" in data:
-            # The Discord bot config is the one setting that must survive a
-            # restart, so persist just those keys to .env (see the helper).
             _persist_discord_env(env_updates)
             _reconcile_discord_bot()
 

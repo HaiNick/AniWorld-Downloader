@@ -324,6 +324,8 @@ class BurningSeriesEpisode(_BSLanguageMixin):
     def selected_path(self):
         if self.__selected_path is None:
             raw = self.__selected_path_param or os.getenv(
+                "ANIWORLD_SERIES_DOWNLOAD_PATH"
+            ) or os.getenv(
                 "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
             )
             path = Path(raw).expanduser()

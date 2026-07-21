@@ -928,7 +928,14 @@ class MegaKinoEpisode:
     @property
     def selected_path(self):
         if self.__selected_path is None:
+            specific_key = (
+                "ANIWORLD_SERIES_DOWNLOAD_PATH"
+                if self.is_series
+                else "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+            )
             raw_path = self.__selected_path_param or os.getenv(
+                specific_key
+            ) or os.getenv(
                 "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
             )
 

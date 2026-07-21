@@ -138,6 +138,14 @@ endblock %} {% block content %}
     <div class="settings-hint">
       Where s.to series downloads are saved. Falls back to the Anime path if left empty.
     </div>
+    <h3 class="settings-subtitle" style="margin-top: 16px">Movie Download Path</h3>
+    <div class="settings-row">
+      <input type="text" id="movieDownloadPath" placeholder="/path/to/downloads/Movies (leave empty to use Anime path)" />
+      <button onclick="saveMovieDownloadPath()">Save</button>
+    </div>
+    <div class="settings-hint">
+      Where movie downloads are saved (FilmPalast, Cineby movies, Kinox movies, MegaKino movies). Falls back to the Anime path if left empty.
+    </div>
     <h3 class="settings-subtitle" data-i18n="settings.provider_fallback">Provider Fallback Order</h3>
     <div id="providerFallbackOrder"></div>
     <div class="settings-hint" data-i18n="settings.provider_fallback_hint">

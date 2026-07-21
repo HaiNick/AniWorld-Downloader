@@ -505,7 +505,12 @@ class CinebyEpisode:
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            raw = self.__selected_path_param or os.getenv(
+            specific_key = (
+                "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+                if self.is_movie
+                else "ANIWORLD_SERIES_DOWNLOAD_PATH"
+            )
+            raw = self.__selected_path_param or os.getenv(specific_key) or os.getenv(
                 "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
             )
             path = Path(raw).expanduser()

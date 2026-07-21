@@ -18,6 +18,7 @@ services:
     # --- General settings (uncomment the environment block to customise) ---
     #   ANIWORLD_DOWNLOAD_PATH: "/app/Downloads/Anime" # Where anime (aniworld.to) downloads are saved
     #   ANIWORLD_SERIES_DOWNLOAD_PATH: "/app/Downloads/Series" # Where series (s.to) downloads are saved
+    #   ANIWORLD_MOVIE_DOWNLOAD_PATH: "/app/Downloads/Movies"  # Where movie downloads are saved
     #   ANIWORLD_LANGUAGE: "German Dub"               # Default language (German Dub | English Sub | German Sub | English Dub)
     #   ANIWORLD_PROVIDER: "VOE"                      # Default streaming provider
     #   ANIWORLD_NAMING_TEMPLATE: "{title} ({year}) [imdbid-{imdbid}]/Season {season}/{title} S{season}E{episode}.mkv"
