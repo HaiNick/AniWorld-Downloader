@@ -82,6 +82,7 @@ Full guides and troubleshooting live in the [documentation](https://www.phoenixt
 | SerienStream | Series | Main focus |
 | MegaKino | Movies and series | Supported |
 | FilmPalast | Movies | Supported |
+| Filmo | Movies | Supported, VOE only |
 | Cineby | Movies and series | Supported, but German tracks can be unreliable upstream |
 | MangaFire | Manga | JPG and CBZ downloads |
 | Hanime | Adult animation | Disabled by default, enable it in Settings |

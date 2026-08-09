@@ -9,6 +9,7 @@ from .burningseries import (
     BurningSeriesSeries,
 )
 from .cineby import CinebyEpisode, CinebySeason, CinebySeries
+from .filmo_to import FilmoEpisode
 from .filmpalast_to import FilmPalastEpisode
 from .hanime_tv import HanimeTVEpisode, HanimeTVSeason, HanimeTVSeries
 from .hianime_to import HiAnimeEpisode, HiAnimeSeason, HiAnimeSeries
@@ -35,6 +36,7 @@ __all__ = [
     "HiAnimeEpisode",
     "MegaKinoEpisode",
     "FilmPalastEpisode",
+    "FilmoEpisode",
     "KinoxSeries",
     "KinoxSeason",
     "KinoxEpisode",

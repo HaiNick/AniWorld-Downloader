@@ -5,6 +5,7 @@ from aniworld.models import (
     AniworldSeason,
     AniworldSeries,
     BurningSeriesSeries,
+    FilmoEpisode,
     FilmPalastEpisode,
     KinoxSeries,
     SerienstreamEpisode,
@@ -80,6 +81,7 @@ def run_all_tests():
         ),
         # New sites (contributed): movie + series entry points
         (FilmPalastEpisode, "https://filmpalast.to/stream/scream-7"),
+        (FilmoEpisode, "https://filmo.to/movies/the-dark-knight-rises"),
         (KinoxSeries, "https://kinox.to/Stream/Avatar-Der_Herr_der_Elemente.html"),
         (BurningSeriesSeries, "https://bs.to/serie/Breaking-Bad"),
     ]

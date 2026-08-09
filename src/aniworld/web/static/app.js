@@ -32,6 +32,8 @@ const kinoxMoviesGrid = document.getElementById("kinoxMoviesGrid");
 const kinoxMoviesSection = document.getElementById("kinoxMoviesSection");
 const filmpalastMoviesGrid = document.getElementById("filmpalastMoviesGrid");
 const filmpalastMoviesSection = document.getElementById("filmpalastMoviesSection");
+const filmoMoviesGrid = document.getElementById("filmoMoviesGrid");
+const filmoMoviesSection = document.getElementById("filmoMoviesSection");
 const burningseriesGrid = document.getElementById("burningseriesGrid");
 const burningseriesSection = document.getElementById("burningseriesSection");
 const cinebyGrid = document.getElementById("cinebyGrid");
@@ -107,6 +109,9 @@ const loadKinoxBrowse = kinoxMoviesGrid
   : () => {};
 const loadFilmpalastBrowse = filmpalastMoviesGrid
   ? makeBrowseLoader("/api/filmpalast-movies", filmpalastMoviesGrid)
+  : () => {};
+const loadFilmoBrowse = filmoMoviesGrid
+  ? makeBrowseLoader("/api/filmo-movies", filmoMoviesGrid)
   : () => {};
 const loadBurningseriesBrowse = burningseriesGrid
   ? makeBrowseLoader("/api/burningseries-series", burningseriesGrid)
@@ -317,6 +322,7 @@ function showBrowseSections() {
   const isMangaFire = currentSite === "mangafire";
   const isKinox = currentSite === "kinox";
   const isFilmpalast = currentSite === "filmpalast";
+  const isFilmo = currentSite === "filmo";
   const isBurningseries = currentSite === "burningseries";
   const isCineby = currentSite === "cineby";
   browseDiv.style.display = "";
@@ -329,6 +335,7 @@ function showBrowseSections() {
   if (mangaFireTrendingSection) mangaFireTrendingSection.style.display = isMangaFire ? "" : "none";
   if (kinoxMoviesSection) kinoxMoviesSection.style.display = isKinox ? "" : "none";
   if (filmpalastMoviesSection) filmpalastMoviesSection.style.display = isFilmpalast ? "" : "none";
+  if (filmoMoviesSection) filmoMoviesSection.style.display = isFilmo ? "" : "none";
   if (burningseriesSection) burningseriesSection.style.display = isBurningseries ? "" : "none";
   if (cinebySection) cinebySection.style.display = isCineby ? "" : "none";
   if (isAniworld) loadAniworldBrowse();
@@ -338,6 +345,7 @@ function showBrowseSections() {
   else if (isMangaFire) loadMangaFireBrowse();
   else if (isKinox) loadKinoxBrowse();
   else if (isFilmpalast) loadFilmpalastBrowse();
+  else if (isFilmo) loadFilmoBrowse();
   else if (isBurningseries) loadBurningseriesBrowse();
   else if (isCineby) loadCinebyBrowse();
 }
@@ -379,7 +387,7 @@ const burningseriesEnabled = window.BURNINGSERIES_ENABLED;
 const kinoxEnabled = window.KINOX_ENABLED;
 // BurningSeries and Kinox are opt-in via .env (ANIWORLD_ENABLE_BURNINGSERIES /
 // ANIWORLD_ENABLE_KINOX) and hidden unless enabled, same as the Hanime tab.
-const sites = ["aniworld", "mangafire", "sto", "burningseries", "megakino", "cineby", "kinox", "filmpalast", "htv"].filter(
+const sites = ["aniworld", "mangafire", "sto", "burningseries", "megakino", "cineby", "kinox", "filmpalast", "filmo", "htv"].filter(
   (site) => {
     if (site === "htv") return htvEnabled;
     if (site === "burningseries") return burningseriesEnabled;
@@ -389,7 +397,7 @@ const sites = ["aniworld", "mangafire", "sto", "burningseries", "megakino", "cin
 );
 
 // Movie-only sites behave like MegaKino (single item, no seasons).
-const movieSites = ["megakino", "filmpalast"];
+const movieSites = ["megakino", "filmpalast", "filmo"];
 
 const siteLabelIds = {
   aniworld: "labelAniworld",
@@ -399,6 +407,7 @@ const siteLabelIds = {
   kinox: "labelKinox",
   burningseries: "labelBurningSeries",
   filmpalast: "labelFilmPalast",
+  filmo: "labelFilmo",
   mangafire: "labelMangaFire",
   htv: "labelHtv",
 };
@@ -411,6 +420,7 @@ const thumbColors = {
   kinox: { bg: "linear-gradient(135deg, #34d399, #059669)", shadow: "0 2px 8px rgba(52, 211, 153, 0.35)" },
   burningseries: { bg: "linear-gradient(135deg, #fb923c, #ea580c)", shadow: "0 2px 8px rgba(251, 146, 60, 0.35)" },
   filmpalast: { bg: "linear-gradient(135deg, #84cc16, #4d7c0f)", shadow: "0 2px 8px rgba(132, 204, 22, 0.35)" },
+  filmo: { bg: "linear-gradient(135deg, #f472b6, #be185d)", shadow: "0 2px 8px rgba(244, 114, 182, 0.35)" },
   mangafire: { bg: "linear-gradient(135deg, #f59e0b, #b45309)", shadow: "0 2px 8px rgba(245, 158, 11, 0.35)" },
   htv: { bg: "linear-gradient(135deg, #ff4fa3, #db2777)", shadow: "0 2px 8px rgba(255, 79, 163, 0.35)" },
 };
@@ -454,6 +464,7 @@ function switchSite(site) {
       kinox: "Kinox Downloader",
       burningseries: "BurningSeries Downloader",
       filmpalast: "FilmPalast Downloader",
+      filmo: "Filmo Downloader",
       mangafire: "MangaFire Downloader",
       htv: "Hanime Downloader",
     };
@@ -473,6 +484,7 @@ function switchSite(site) {
     kinox: "Search Kinox...",
     burningseries: "Search BurningSeries...",
     filmpalast: "Search FilmPalast...",
+    filmo: "Search Filmo...",
   };
   searchInput.placeholder = placeholders[site] || "Search AniWorld...";
 
@@ -502,6 +514,7 @@ const siteLangMaps = {
   kinox: () => window.KINOX_LANGS || {},
   burningseries: () => window.BURNINGSERIES_LANGS || {},
   filmpalast: () => window.FILMPALAST_LANGS || {},
+  filmo: () => window.FILMO_LANGS || {},
   cineby: () => window.CINEBY_LANGS || {},
 };
 
@@ -629,6 +642,7 @@ function refreshVisibleBrowse(force = false) {
   else if (currentSite === "htv") loadHtvBrowse(force);
   else if (currentSite === "kinox") loadKinoxBrowse(force);
   else if (currentSite === "filmpalast") loadFilmpalastBrowse(force);
+  else if (currentSite === "filmo") loadFilmoBrowse(force);
   else if (currentSite === "burningseries") loadBurningseriesBrowse(force);
   else if (currentSite === "cineby") loadCinebyBrowse(force);
 }

@@ -24,6 +24,7 @@ from ..providers import resolve_provider
 from ..search import (
     fetch_burningseries_series,
     fetch_cineby_movies,
+    fetch_filmo_movies,
     fetch_filmpalast_movies,
     fetch_kinox_movies,
     fetch_new_animes,
@@ -33,6 +34,7 @@ from ..search import (
     fetch_popular_series,
     query_burningseries,
     query_cineby,
+    query_filmo,
     query_filmpalast,
     query_kinox,
     query_megakino,
@@ -115,6 +117,7 @@ SITE_KEYS = (
     "kinox",
     "burningseries",
     "filmpalast",
+    "filmo",
     "cineby",
 )
 
@@ -1305,11 +1308,19 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                         "poster_url": _proxy_image_url(_normalize_image_url(poster)),
                     }
                 )
-        elif site in ("megakino", "kinox", "filmpalast", "burningseries", "cineby"):
+        elif site in (
+            "megakino",
+            "kinox",
+            "filmpalast",
+            "filmo",
+            "burningseries",
+            "cineby",
+        ):
             query_fn = {
                 "megakino": query_megakino,
                 "kinox": query_kinox,
                 "filmpalast": query_filmpalast,
+                "filmo": query_filmo,
                 "burningseries": query_burningseries,
                 "cineby": query_cineby,
             }[site]
@@ -1445,7 +1456,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
         try:
             prov = resolve_provider(url)
-            if prov.name in ("MegaKino", "FilmPalast"):
+            if prov.name in ("MegaKino", "FilmPalast", "Filmo"):
                 # MegaKino serials list many episodes on one page; surface them
                 # as a single season with the real episode count.
                 if prov.name == "MegaKino" and "/serials/" in url.lower():
@@ -1517,7 +1528,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         try:
             prov = resolve_provider(url)
 
-            if prov.name in ("MegaKino", "FilmPalast"):
+            if prov.name in ("MegaKino", "FilmPalast", "Filmo"):
                 episode = prov.episode_cls(url=url, selected_language="German Dub")
                 if prov.name == "MegaKino" and episode.is_series:
                     episodes_data = [
@@ -2150,6 +2161,17 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         results = _cached_browse("filmpalast_movies", fetch_filmpalast_movies)
         if results is None:
             return jsonify({"error": "Failed to fetch filmpalast movies"}), 500
+        proxied = [
+            {**r, "poster_url": _proxy_image_url(r.get("poster_url", ""))}
+            for r in results
+        ]
+        return jsonify({"results": proxied})
+
+    @app.route("/api/filmo-movies")
+    def api_filmo_movies():
+        results = _cached_browse("filmo_movies", fetch_filmo_movies)
+        if results is None:
+            return jsonify({"error": "Failed to fetch filmo movies"}), 500
         proxied = [
             {**r, "poster_url": _proxy_image_url(r.get("poster_url", ""))}
             for r in results

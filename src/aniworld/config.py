@@ -480,6 +480,11 @@ FILMPALAST_SERIES_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+FILMO_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?filmo\.to/movies/[^/?#]+/?$",
+    re.IGNORECASE,
+)
+
 # The trailing (?:\?[^#]*)? lets per-episode URLs (…?s=1&e=2) resolve too.
 KINOX_SERIES_PATTERN = re.compile(
     r"^https?://(?:www\.)?kinox[\w.-]*\.[^/]+/Stream/[^/?#]+?(?:\.html)?(?:\?[^#]*)?/?$",
