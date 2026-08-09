@@ -500,6 +500,7 @@ const PATH_SITE_OPTIONS = [
   ["kinox", "Kinox"],
   ["burningseries", "BurningSeries"],
   ["filmpalast", "FilmPalast"],
+  ["filmo", "Filmo"],
   ["mangafire", "MangaFire"],
   ["htv", "Hanime"],
   ["cineby", "Cineby"],

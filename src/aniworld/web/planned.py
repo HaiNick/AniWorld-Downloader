@@ -16,6 +16,7 @@ from ..search import (
     query,
     query_burningseries,
     query_cineby,
+    query_filmo,
     query_filmpalast,
     query_kinox,
     query_megakino,
@@ -37,6 +38,7 @@ SITE_SEARCH = {
     "megakino": query_megakino,
     "kinox": query_kinox,
     "filmpalast": query_filmpalast,
+    "filmo": query_filmo,
     "burningseries": query_burningseries,
     "cineby": query_cineby,
 }
@@ -45,7 +47,7 @@ SITE_SEARCH = {
 # grabbed from whichever site has it first. Kinox/Cineby appear in both because
 # they carry movies and series; a type check disambiguates their hits.
 SERIES_SITE_ORDER = ["sto", "burningseries", "aniworld", "kinox", "cineby"]
-MOVIE_SITE_ORDER = ["megakino", "filmpalast", "kinox", "cineby"]
+MOVIE_SITE_ORDER = ["megakino", "filmpalast", "filmo", "kinox", "cineby"]
 
 # Sites whose search mixes movies and series and therefore need a type check.
 _MIXED_SITES = {"kinox", "cineby"}

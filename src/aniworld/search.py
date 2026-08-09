@@ -836,6 +836,110 @@ def query_filmpalast(keyword):
     return results
 
 
+FILMO_BASE = "https://filmo.to"
+
+# Search hits and the browse grids share one card template.
+_FILMO_CARD_PATTERN = re.compile(
+    r'<article class="popular-spotlight-card[^"]*">(.*?)</article>', re.DOTALL
+)
+
+
+def _parse_filmo_cards(html, limit=30):
+    """Pull {title, url, poster_url, genre} out of Filmo's movie cards."""
+    results = []
+    seen = set()
+
+    for card in _FILMO_CARD_PATTERN.findall(html):
+        href = re.search(r'href="(https://filmo\.to/movies/[^"]+)"', card)
+        if not href:
+            continue
+        url = href.group(1).strip()
+        if url in seen:
+            continue
+
+        title_m = re.search(
+            r'<h[1-6][^>]*popular-spotlight-card__title[^>]*>(.*?)</h[1-6]>',
+            card,
+            re.DOTALL,
+        )
+        if not title_m:
+            continue
+        title = re.sub(r"<[^>]+>", "", title_m.group(1)).strip()
+        if not title:
+            continue
+
+        seen.add(url)
+
+        poster = ""
+        pm = re.search(r'<img[^>]*\ssrc="([^"]+)"', card)
+        if pm:
+            poster = pm.group(1).strip()
+
+        genre_m = re.search(r'swiper-card-badge"[^>]*>(.*?)</div>', card, re.DOTALL)
+        genre = re.sub(r"<[^>]+>", "", genre_m.group(1)).strip() if genre_m else ""
+
+        results.append(
+            {
+                "title": html_module.unescape(title),
+                "url": url,
+                "poster_url": poster,
+                "genre": genre,
+            }
+        )
+
+        if len(results) >= limit:
+            break
+
+    return results
+
+
+def query_filmo(keyword):
+    """Search filmo.to and return a list of movie results with posters."""
+
+    def _run(term):
+        try:
+            resp = GLOBAL_SESSION.get(
+                f"{FILMO_BASE}/search",
+                params={"q": term},
+                headers={
+                    "Accept-Encoding": "gzip, deflate",
+                    "Referer": f"{FILMO_BASE}/",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.debug(f"filmo search failed for {term!r}: {exc}")
+            return []
+        return _parse_filmo_cards(resp.text)
+
+    results = _run(keyword)
+    if not results:
+        cleaned = _clean_search_query(keyword)
+        if cleaned.lower() != keyword.lower():
+            results = _run(cleaned)
+    return results
+
+
+def fetch_filmo_movies():
+    """Fetch popular movies from filmo.to for the browse grid."""
+    try:
+        resp = GLOBAL_SESSION.get(
+            f"{FILMO_BASE}/popular",
+            headers={
+                "Accept-Encoding": "gzip, deflate",
+                "Referer": f"{FILMO_BASE}/",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.debug(f"filmo browse failed: {exc}")
+        return None
+
+    return _parse_filmo_cards(resp.text)
+
+
 def query_kinox(keyword):
     """Search kinox.to and return a list of results with posters."""
     from .models.kinox.series import KINOX_DOMAIN

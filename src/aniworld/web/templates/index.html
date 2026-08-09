@@ -15,6 +15,7 @@
       <button class="segmented-btn" id="labelKinox" onclick="switchSite('kinox')">Kinox</button>
       {% endif %}
       <button class="segmented-btn" id="labelFilmPalast" onclick="switchSite('filmpalast')">FilmPalast</button>
+      <button class="segmented-btn" id="labelFilmo" onclick="switchSite('filmo')">Filmo</button>
       {% if htv_enabled %}
       <button class="segmented-btn" id="labelHtv" onclick="switchSite('htv')">Hanime</button>
       {% endif %}
@@ -59,6 +60,10 @@
     <div class="browse-section" id="filmpalastMoviesSection" style="display: none">
       <h2 class="browse-heading" data-i18n="browse.new_movies">New Movies</h2>
       <div class="browse-grid" id="filmpalastMoviesGrid"></div>
+    </div>
+    <div class="browse-section" id="filmoMoviesSection" style="display: none">
+      <h2 class="browse-heading" data-i18n="browse.popular_movies">Popular Movies</h2>
+      <div class="browse-grid" id="filmoMoviesGrid"></div>
     </div>
     <div class="browse-section" id="burningseriesSection" style="display: none">
       <h2 class="browse-heading" data-i18n="browse.recent_series">Recently Updated</h2>
@@ -127,6 +132,7 @@
       window.KINOX_LANGS = { "1": "German Dub", "2": "English Dub" };
       window.BURNINGSERIES_LANGS = { "1": "German Dub", "2": "English Dub" };
       window.FILMPALAST_LANGS = { "1": "German Dub", "2": "English Dub" };
+      window.FILMO_LANGS = { "1": "German Dub", "2": "English Dub" };
       // German Dub is only kept visible for titles that actually have it —
       // /api/providers reports the available dubs per title and the language
       // select hides the ones it omits.

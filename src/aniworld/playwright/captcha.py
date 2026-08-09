@@ -201,6 +201,7 @@ _AD_SAFE_HOST_SUFFIXES = (
     "serienstream.to",
     "aniworld.to",
     "filmpalast.to",
+    "filmo.to",
 )
 
 
