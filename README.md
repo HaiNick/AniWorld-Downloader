@@ -88,7 +88,18 @@ Full guides and troubleshooting live in the [documentation](https://www.phoenixt
 | Kinox | Movies and series | Disabled by default because downloads often require a manual captcha |
 | BurningSeries | Series | Disabled by default because access depends on region and reCAPTCHA |
 
-For AniWorld and SerienStream, the downloader currently prioritizes VOE, Vidmoly, Vidoza, and Doodstream. Availability changes often because these are third-party services. A hoster working today can have a bad day tomorrow, so fallback order matters.
+### Stream Providers
+
+| Provider | Status | Last Checked |
+| --- | --- | --- |
+| VOE | Working | 07/26 |
+| Filemoon | Working | 07/26 |
+| Vidmoly | Untested | XX/XX |
+| Vidoza | Untested | XX/XX |
+| Doodstream | Untested | XX/XX |
+| MegaKino | Broken | 07/26 |
+
+Availability depends on the selected site and episode. When a provider fails, the downloader can try the others in your configured fallback order. These are third-party services, so availability can change without warning.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -212,8 +223,10 @@ AniWorld Downloader leans on some excellent open-source projects:
 
 ## Other Cool Projects
 
-- [Jellyfin AniWorld Downloader](https://github.com/SiroxCW/Jellyfin-AniWorld-Downloader) by [SiroxCW](https://github.com/SiroxCW), a Jellyfin plugin for browsing and downloading AniWorld content inside your media server
+- [Jellyfin-AniWorld-Downloader](https://github.com/SiroxCW/Jellyfin-AniWorld-Downloader) by [SiroxCW](https://github.com/SiroxCW), a Jellyfin plugin for browsing and downloading AniWorld content inside your media server
+- [AniSeerr](https://github.com/Yezun-hikari/AniSeerr) by [Yezun-hikari](https://github.com/Yezun-hikari), a bridge connecting Seerr with AniWorld-Downloader for requests
 - [AniBridge](https://github.com/Zzackllack/AniBridge) by [Zzackllack](https://github.com/Zzackllack), a small FastAPI bridge between supported catalogues and automation tools
+- [AniLoader](https://github.com/WimWamWom/AniLoader) by [WimWamWom](https://github.com/WimWamWom), a standalone web-based fork of AniWorld-Downloader
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
