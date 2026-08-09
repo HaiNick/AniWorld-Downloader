@@ -365,6 +365,17 @@ class FilmoEpisode:
         return self.__provider_url
 
     @property
+    def _separate_audio_rendition(self):
+        # Filmo's VOE masters carry every dub as its own
+        # #EXT-X-MEDIA:TYPE=AUDIO rendition while the video variant comes
+        # pre-muxed with one of them (German on the titles seen so far). The
+        # site switches tracks client-side via ?default_audio_language, which
+        # never reaches a download - so the shared download() has to select the
+        # rendition itself, for German too rather than trusting the muxed
+        # default to be the right one.
+        return True
+
+    @property
     def stream_url(self):
         try:
             stream_url = provider_functions[
