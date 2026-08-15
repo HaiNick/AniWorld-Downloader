@@ -134,9 +134,9 @@ class FilmoEpisode:
     def __init__(
         self,
         url: str,
-        selected_path: str = None,
-        selected_language: str = None,
-        selected_provider: str = None,
+        selected_path: str | None = None,
+        selected_language: str | None = None,
+        selected_provider: str | None = None,
     ):
         if not self.__is_valid_filmo_episode_url(url):
             raise ValueError(f"Invalid Filmo episode URL: {url}")
@@ -735,7 +735,7 @@ class FilmoEpisode:
     def available_languages(self):
         provider_data = self.provider_data
         if not isinstance(provider_data, ProviderData):
-            return tuple()
+            return ()
         return tuple(
             _AUDIO_LABEL[audio]
             for audio in (Audio.GERMAN, Audio.ENGLISH, Audio.JAPANESE)
@@ -745,9 +745,9 @@ class FilmoEpisode:
     def available_providers(self, language=None):
         key = self._language_key(language)
         if key is None:
-            return tuple()
+            return ()
         provider_dict = self.provider_data.get(key)
-        return tuple(provider_dict.keys()) if provider_dict else tuple()
+        return tuple(provider_dict.keys()) if provider_dict else ()
 
     def provider_attempt_order(self):
         return build_provider_attempt_order(

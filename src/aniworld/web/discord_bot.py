@@ -33,17 +33,8 @@ except Exception:  # optional dependency
 MOVIE_LANGUAGES = ("German Dub", "English Dub")
 SERIES_LANGUAGES = ("German Dub", "English Dub", "English Sub", "German Sub")
 
-# Nice labels for the aggregated dropdown.
-SITE_LABELS = {
-    "aniworld": "AniWorld",
-    "sto": "SerienStream",
-    "megakino": "MegaKino",
-    "kinox": "Kinox",
-    "filmpalast": "FilmPalast",
-    "filmo": "Filmo",
-    "burningseries": "BurningSeries",
-    "cineby": "Cineby",
-}
+# Nice labels for the aggregated dropdown come from media.SITE_LABELS (imported
+# above), which is the single source of truth for site keys and their names.
 
 # How long a request's dropdown stays usable.
 VIEW_TIMEOUT = 300
