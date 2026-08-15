@@ -1,6 +1,7 @@
 import os
 import re
 from collections import defaultdict
+from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -477,7 +478,7 @@ class AniworldEpisode:
         )
 
         if german_match:
-            return german_match.group(1).strip()
+            return unescape(german_match.group(1)).strip()
 
         return None
 
@@ -498,7 +499,7 @@ class AniworldEpisode:
             r'<small[^>]*class="episodeEnglishTitle"[^>]*>([^<]*)', html
         )
         if english_match:
-            return english_match.group(1).strip()
+            return unescape(english_match.group(1)).strip()
 
         return None
 
@@ -529,7 +530,7 @@ class AniworldEpisode:
             language = self.selected_language
         language = self._normalize_language(language)
         provider_dict = self.__provider_dict_for_language(language)
-        return tuple(provider_dict.keys()) if provider_dict else tuple()
+        return tuple(provider_dict.keys()) if provider_dict else ()
 
     def provider_attempt_order(self):
         return build_provider_attempt_order(
@@ -552,7 +553,7 @@ class AniworldEpisode:
         if not (isinstance(language, tuple) and len(language) == 2):
             return None
 
-        for key in self.provider_data._data.keys():
+        for key in self.provider_data._data:
             if key[0].value == language[0].value and key[1].value == language[1].value:
                 return self.provider_data._data[key]
 

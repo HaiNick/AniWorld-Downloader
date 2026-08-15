@@ -1,751 +1,767 @@
-// Download path settings
-const downloadPathInput = document.getElementById("downloadPath");
-const seriesDownloadPathInput = document.getElementById("seriesDownloadPath");
-const movieDownloadPathInput = document.getElementById("movieDownloadPath");
-const langSeparationCb = document.getElementById("langSeparation");
-const disableEnglishSubCb = document.getElementById("disableEnglishSub");
-const enableHtvCb = document.getElementById("enableHtv");
-const syncScheduleSelect = document.getElementById("syncSchedule");
-const syncLanguageSelect = document.getElementById("syncLanguage");
-const syncProviderSelect = document.getElementById("syncProvider");
-const providerFallbackOrderEl = document.getElementById("providerFallbackOrder");
-const publicIpValue = document.getElementById("publicIpValue");
-const publicIpMeta = document.getElementById("publicIpMeta");
-const refreshPublicIpBtn = document.getElementById("refreshPublicIpBtn");
-let availableProviders = [];
-let providerFallbackOrder = [];
+/* Settings page. */
 
-async function loadSettings() {
-  try {
-    const resp = await fetch("/api/settings");
-    const data = await resp.json();
-    downloadPathInput.value = data.download_path || "";
-    if (seriesDownloadPathInput)
-      seriesDownloadPathInput.value = data.series_download_path || "";
-    if (movieDownloadPathInput)
-      movieDownloadPathInput.value = data.movie_download_path || "";
-    if (langSeparationCb)
-      langSeparationCb.checked = data.lang_separation === "1";
-    if (disableEnglishSubCb)
-      disableEnglishSubCb.checked = data.disable_english_sub === "1";
-    if (enableHtvCb) enableHtvCb.checked = data.enable_htv === "1";
-    if (syncScheduleSelect && data.sync_schedule)
-      syncScheduleSelect.value = data.sync_schedule;
+(function () {
+  const el = (id) => document.getElementById(id);
 
-    const isLangSep = data.lang_separation === "1";
-    let currentSyncLang = data.sync_language;
-    if (currentSyncLang === "All Languages" && !isLangSep) {
-      currentSyncLang = "German Dub";
-    }
-    updateSyncLanguageDropdown(isLangSep, currentSyncLang);
+  const SITE_OPTIONS = [
+    ["aniworld", "AniWorld"],
+    ["sto", "SerienStream"],
+    ["burningseries", "BurningSeries"],
+    ["megakino", "MegaKino"],
+    ["cineby", "Cineby"],
+    ["kinox", "Kinox"],
+    ["filmpalast", "FilmPalast"],
+    ["filmo", "Filmo"],
+    ["htv", "Hanime"],
+    ["mangafire", "MangaFire"]
+  ];
 
-    availableProviders = Array.isArray(data.available_providers)
-      ? data.available_providers
-      : [];
-    updateSyncProviderDropdown(availableProviders, data.sync_provider);
-    renderProviderFallbackOrder(data.provider_fallback_order || availableProviders);
+  const SECRET_PLACEHOLDER = "••••••••";
 
-    const uiLanguage = document.getElementById("uiLanguage");
-    if (uiLanguage && data.ui_language) uiLanguage.value = data.ui_language;
-    const outputFormat = document.getElementById("outputFormat");
-    if (outputFormat && data.output_format) outputFormat.value = data.output_format;
-    const movieFolder = document.getElementById("movieFolder");
-    if (movieFolder) movieFolder.checked = data.movie_folder !== "0";
+  let providerOrder = [];
 
-    if (data.discord) applyDiscordSettings(data.discord);
-  } catch (e) {
-    showToast("Failed to load settings: " + e.message);
-  }
-}
-
-async function putSettings(payload, successMsg) {
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
+  async function save(payload, message) {
+    try {
+      await apiSend("/api/settings", "PUT", payload);
+      showToast(message || t("settings.saved", "Saved"));
+      return true;
+    } catch (error) {
+      showToast(`${t("settings.save_failed", "Could not save")}: ${error.message}`);
       return false;
     }
-    if (successMsg) showToast(successMsg);
-    return true;
-  } catch (e) {
-    showToast("Failed to save: " + e.message);
-    return false;
   }
-}
 
-function saveUiLanguage() {
-  const value = document.getElementById("uiLanguage").value;
-  // setLanguage() persists to the server and re-renders the page instantly.
-  if (typeof window.setLanguage === "function") window.setLanguage(value);
-  else putSettings({ ui_language: value });
-}
+  /* ===== Load ===== */
+  async function load() {
+    let settings;
+    try {
+      settings = await apiFetch("/api/settings");
+    } catch (error) {
+      showToast(error.message);
+      return;
+    }
 
-function saveOutputFormat() {
-  const value = document.getElementById("outputFormat").value;
-  putSettings({ output_format: value }, "Output format saved");
-}
+    el("downloadPath").value = settings.download_path || "";
+    el("seriesDownloadPath").value = settings.series_download_path || "";
+    el("movieDownloadPath").value = settings.movie_download_path || "";
+    el("uiLanguage").value = settings.ui_language;
+    el("outputFormat").value = settings.output_format;
 
-function saveMovieFolder() {
-  const checked = document.getElementById("movieFolder").checked;
-  putSettings({ movie_folder: checked }, "Setting saved");
-}
+    document.querySelectorAll("[data-setting]").forEach((box) => {
+      box.checked = Boolean(settings[box.dataset.setting]);
+    });
 
-// ===== Discord bot =====
+    providerOrder = settings.provider_fallback_order || [];
+    savedOrder = providerOrder.slice();
+    renderProviderOrder();
+    applyDiscord(settings.discord || {});
+  }
 
-function applyDiscordSettings(d) {
-  const enabled = document.getElementById("discordEnabled");
-  const owner = document.getElementById("discordOwner");
-  const mode = document.getElementById("discordMode");
-  const role = document.getElementById("discordRole");
-  const guild = document.getElementById("discordGuild");
-  const language = document.getElementById("discordLanguage");
-  const announce = document.getElementById("discordAnnounce");
-  const token = document.getElementById("discordToken");
-  if (enabled) enabled.checked = !!d.enabled;
-  if (owner) owner.value = d.owner_id || "";
-  if (mode) mode.value = d.mode || "standard";
-  if (role) role.value = d.request_role_id || "";
-  if (guild) guild.value = d.guild_id || "";
-  if (language) language.value = d.language || "en";
-  if (announce) announce.value = d.announce_channel_id || "";
-  // Show a placeholder when a token is already stored; leave blank to keep it.
-  if (token) token.placeholder = d.token_set ? "••••••••" : "";
-  loadDiscordStatus();
-}
+  /* ===== Simple toggles and selects ===== */
+  document.querySelectorAll("[data-setting]").forEach((box) => {
+    box.addEventListener("change", async () => {
+      const ok = await save({ [box.dataset.setting]: box.checked });
+      if (!ok) {
+        box.checked = !box.checked;
+        return;
+      }
+      // Enabling or disabling a tab changes the navbar and home page
+      if (box.dataset.reload) setTimeout(() => window.location.reload(), 400);
+    });
+  });
 
-async function saveDiscord() {
-  const token = document.getElementById("discordToken").value;
-  const payload = {
-    discord: {
-      enabled: document.getElementById("discordEnabled").checked,
-      owner_id: document.getElementById("discordOwner").value.trim(),
-      mode: document.getElementById("discordMode").value,
-      request_role_id: document.getElementById("discordRole").value.trim(),
-      guild_id: document.getElementById("discordGuild").value.trim(),
-      language: document.getElementById("discordLanguage").value,
-      announce_channel_id: document.getElementById("discordAnnounce").value.trim(),
-    },
+  el("saveDownloadPathBtn").addEventListener("click", () => {
+    save({ download_path: el("downloadPath").value.trim() });
+  });
+
+  el("saveSeriesDownloadPathBtn").addEventListener("click", () => {
+    save({ series_download_path: el("seriesDownloadPath").value.trim() });
+  });
+
+  el("saveMovieDownloadPathBtn").addEventListener("click", () => {
+    save({ movie_download_path: el("movieDownloadPath").value.trim() });
+  });
+
+  el("uiLanguage").addEventListener("change", async () => {
+    if (await save({ ui_language: el("uiLanguage").value })) {
+      setTimeout(() => window.location.reload(), 400);
+    }
+  });
+
+  el("outputFormat").addEventListener("change", () => {
+    save({ output_format: el("outputFormat").value });
+  });
+
+  /* ===== Provider fallback order =====
+     Rows are dragged with pointer events so it works with a mouse and on
+     touch alike. Arrow keys do the same thing for keyboard users. */
+  const providerList = el("providerOrder");
+
+  function renderProviderOrder() {
+    providerList.innerHTML = providerOrder
+      .map(
+        (provider, index) => `
+        <div class="provider-row" tabindex="0" role="listitem"
+          aria-label="${esc(provider)}">
+          <span class="drag-grip" aria-hidden="true"></span>
+          <span class="provider-rank">${index + 1}</span>
+          <span class="provider-name">${esc(provider)}</span>
+        </div>`
+      )
+      .join("");
+  }
+
+  function refreshRanks() {
+    Array.from(providerList.children).forEach((row, index) => {
+      row.querySelector(".provider-rank").textContent = index + 1;
+    });
+  }
+
+  // Moves the row in the DOM instead of re-rendering, so the node being
+  // dragged survives and keeps its pointer capture.
+  function moveRow(from, to) {
+    if (from === to) return;
+    const rows = Array.from(providerList.children);
+    const reference = from < to ? rows[to].nextSibling : rows[to];
+    providerList.insertBefore(rows[from], reference);
+    providerOrder.splice(to, 0, providerOrder.splice(from, 1)[0]);
+    refreshRanks();
+  }
+
+  let savedOrder = [];
+  let drag = null;
+
+  async function commitOrder() {
+    if (providerOrder.join() === savedOrder.join()) return;
+    if (await save({ provider_fallback_order: providerOrder })) {
+      savedOrder = providerOrder.slice();
+    } else {
+      providerOrder = savedOrder.slice();
+      renderProviderOrder();
+    }
+  }
+
+  providerList.addEventListener("pointerdown", (event) => {
+    const row = event.target.closest(".provider-row");
+    if (!row || event.button !== 0 || drag) return;
+
+    const rows = Array.from(providerList.children);
+    const rect = row.getBoundingClientRect();
+    // rows are uniform, so one row plus the flex gap is a full step
+    const gap = parseFloat(getComputedStyle(providerList).rowGap) || 0;
+    drag = {
+      row,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startIndex: rows.indexOf(row),
+      step: rect.height + gap
+    };
+    drag.index = drag.startIndex;
+    row.setPointerCapture(event.pointerId);
+    row.classList.add("dragging");
+    event.preventDefault();
+  });
+
+  providerList.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    const delta = event.clientY - drag.startY;
+    let target = drag.startIndex + Math.round(delta / drag.step);
+    target = Math.max(0, Math.min(providerOrder.length - 1, target));
+    if (target !== drag.index) {
+      moveRow(drag.index, target);
+      drag.index = target;
+    }
+    // the row has already shifted by whole slots, only show what is left over
+    const settled = (drag.index - drag.startIndex) * drag.step;
+    drag.row.style.transform = `translateY(${delta - settled}px)`;
+  });
+
+  function endDrag() {
+    if (!drag) return;
+    drag.row.style.transform = "";
+    drag.row.classList.remove("dragging");
+    const moved = drag.index !== drag.startIndex;
+    drag = null;
+    if (moved) commitOrder();
+  }
+
+  providerList.addEventListener("pointerup", endDrag);
+  providerList.addEventListener("pointercancel", endDrag);
+
+  providerList.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const row = event.target.closest(".provider-row");
+    if (!row) return;
+
+    const index = Array.from(providerList.children).indexOf(row);
+    const target = index + (event.key === "ArrowUp" ? -1 : 1);
+    if (target < 0 || target >= providerOrder.length) return;
+
+    event.preventDefault();
+    moveRow(index, target);
+    row.focus();
+    commitOrder();
+  });
+
+  /* ===== Custom paths ===== */
+  function renderCustomPaths(paths) {
+    const body = el("customPathsBody");
+    if (!paths.length) {
+      body.innerHTML = `<tr class="empty-row"><td colspan="4">${t("library.empty", "Nothing here yet.")}</td></tr>`;
+      return;
+    }
+
+    body.innerHTML = paths
+      .map((path) => {
+        const enabled = (path.default_sites || "").split(",");
+        const toggles = SITE_OPTIONS.map(
+          ([key, label]) => `
+            <label class="site-toggle">
+              <input type="checkbox" data-path="${path.id}" data-site="${key}"
+                ${enabled.includes(key) ? "checked" : ""} />
+              <span>${label}</span>
+            </label>`
+        ).join("");
+
+        return `
+          <tr>
+            <td>${esc(path.name)}</td>
+            <td><code>${esc(path.path)}</code></td>
+            <td><div class="site-toggles">${toggles}</div></td>
+            <td>
+              <button class="btn btn-danger" data-delete-path="${path.id}"
+                data-name="${esc(path.name)}">${t("common.remove", "Remove")}</button>
+            </td>
+          </tr>`;
+      })
+      .join("");
+  }
+
+  async function loadCustomPaths() {
+    try {
+      const data = await apiFetch("/api/custom-paths");
+      renderCustomPaths(data.paths || []);
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  el("addPathBtn").addEventListener("click", async () => {
+    const name = el("newPathName").value.trim();
+    const path = el("newPathValue").value.trim();
+    if (!name || !path) {
+      showToast(t("settings.path_required", "Name and path are required"));
+      return;
+    }
+    try {
+      await apiSend("/api/custom-paths", "POST", { name, path });
+      el("newPathName").value = "";
+      el("newPathValue").value = "";
+      loadCustomPaths();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  el("customPathsBody").addEventListener("change", async (event) => {
+    const box = event.target.closest("[data-site]");
+    if (!box) return;
+
+    const pathId = box.dataset.path;
+    const sites = Array.from(
+      el("customPathsBody").querySelectorAll(`[data-path="${pathId}"]:checked`)
+    ).map((checked) => checked.dataset.site);
+
+    try {
+      await apiSend(`/api/custom-paths/${pathId}`, "PUT", { default_sites: sites });
+    } catch (error) {
+      showToast(error.message);
+      box.checked = !box.checked;
+    }
+  });
+
+  el("customPathsBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-delete-path]");
+    if (!button) return;
+
+    const message = t("settings.confirm_delete_path", 'Remove path "{name}"?', {
+      name: button.dataset.name
+    });
+    if (!window.confirm(message)) return;
+
+    try {
+      await apiSend(`/api/custom-paths/${button.dataset.deletePath}`, "DELETE");
+      loadCustomPaths();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  /* ===== Discord ===== */
+  function applyDiscord(discord) {
+    el("discordEnabled").checked = Boolean(discord.enabled);
+    // Never send the real token to the browser, show a placeholder instead
+    el("discordToken").value = discord.token_set ? SECRET_PLACEHOLDER : "";
+    el("discordOwner").value = discord.owner_id || "";
+    el("discordMode").value = discord.mode || "standard";
+    el("discordLanguage").value = discord.language || "en";
+    el("discordRole").value = discord.request_role_id || "";
+    el("discordGuild").value = discord.guild_id || "";
+    el("discordAnnounce").value = discord.announce_channel_id || "";
+  }
+
+  el("saveDiscordBtn").addEventListener("click", async () => {
+    const payload = {
+      discord: {
+        enabled: el("discordEnabled").checked,
+        token: el("discordToken").value,
+        owner_id: el("discordOwner").value.trim(),
+        mode: el("discordMode").value,
+        language: el("discordLanguage").value,
+        request_role_id: el("discordRole").value.trim(),
+        guild_id: el("discordGuild").value.trim(),
+        announce_channel_id: el("discordAnnounce").value.trim()
+      }
+    };
+    if (await save(payload)) setTimeout(loadDiscordStatus, 1500);
+  });
+
+  async function loadDiscordStatus() {
+    const status = el("discordStatus");
+    try {
+      const data = await apiFetch("/api/discord/status");
+      if (data.available === false) {
+        status.textContent = t("settings.discord.unavailable", "discord.py is not installed");
+        status.className = "status-pill status-cancelled";
+        return;
+      }
+      if (data.running) {
+        status.textContent = t("settings.discord.running", "Running as {user}", {
+          user: data.user || "bot"
+        });
+        status.className = "status-pill status-completed";
+        return;
+      }
+      status.textContent = data.error || t("settings.discord.stopped", "Stopped");
+      status.className = data.error ? "status-pill status-failed" : "status-pill status-queued";
+    } catch (error) {
+      status.textContent = "";
+    }
+  }
+
+  /* ===== Users ===== */
+  function renderUsers(users) {
+    const body = el("userTableBody");
+    if (!body) return;
+
+    body.innerHTML = users
+      .map(
+        (user) => `
+        <tr>
+          <td>${user.id}</td>
+          <td>${esc(user.username)}</td>
+          <td>
+            <select data-role-for="${user.id}">
+              <option value="user"${user.role === "user" ? " selected" : ""}>User</option>
+              <option value="admin"${user.role === "admin" ? " selected" : ""}>Admin</option>
+            </select>
+          </td>
+          <td>${esc(user.auth_method)}</td>
+          <td>
+            <button class="btn btn-danger" data-delete-user="${user.id}"
+              data-name="${esc(user.username)}">${t("common.delete", "Delete")}</button>
+          </td>
+        </tr>`
+      )
+      .join("");
+  }
+
+  async function loadUsers() {
+    try {
+      const data = await apiFetch("/admin/api/users");
+      renderUsers(data.users || []);
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  if (window.AUTH_ENABLED) {
+    const addUserBtn = el("addUserBtn");
+    if (addUserBtn) {
+      addUserBtn.addEventListener("click", async () => {
+        try {
+          await apiSend("/admin/api/users", "POST", {
+            username: el("newUsername").value.trim(),
+            password: el("newPassword").value,
+            role: el("newRole").value
+          });
+          el("newUsername").value = "";
+          el("newPassword").value = "";
+          loadUsers();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    }
+
+    const userBody = el("userTableBody");
+    userBody.addEventListener("change", async (event) => {
+      const select = event.target.closest("[data-role-for]");
+      if (!select) return;
+      try {
+        await apiSend(`/admin/api/users/${select.dataset.roleFor}/role`, "PUT", {
+          role: select.value
+        });
+      } catch (error) {
+        showToast(error.message);
+        loadUsers();
+      }
+    });
+
+    userBody.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-delete-user]");
+      if (!button) return;
+
+      const message = t("settings.confirm_delete_user", 'Delete user "{name}"?', {
+        name: button.dataset.name
+      });
+      if (!window.confirm(message)) return;
+
+      try {
+        await apiSend(`/admin/api/users/${button.dataset.deleteUser}`, "DELETE");
+        loadUsers();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+
+    loadUsers();
+  }
+
+  /* ===== API keys ===== */
+  const SCOPE_LABELS = {
+    read: () => t("settings.scope_read", "Read only"),
+    write: () => t("settings.scope_write", "Read and download"),
+    admin: () => t("settings.scope_admin", "Full access")
   };
-  // Only send the token when the user actually typed a new one.
-  if (token && token !== "••••••••") payload.discord.token = token;
 
-  const ok = await putSettings(payload, "Discord settings saved");
-  if (ok) {
-    document.getElementById("discordToken").value = "";
-    setTimeout(loadDiscordStatus, 1500);
+  function formatKeyDate(value) {
+    if (!value) return "-";
+    // sqlite hands back "YYYY-MM-DD HH:MM:SS" in UTC
+    const date = new Date(value.replace(" ", "T") + "Z");
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   }
-}
 
-async function loadDiscordStatus() {
-  const el = document.getElementById("discordStatus");
-  if (!el) return;
-  try {
-    const resp = await fetch("/api/discord/status");
-    const data = await resp.json();
-    if (data.running) {
-      el.textContent = "● " + (data.user ? data.user : "online");
-      el.className = "discord-status discord-status-on";
-    } else if (data.error) {
-      el.textContent = "● " + data.error;
-      el.className = "discord-status discord-status-err";
-    } else {
-      el.textContent = "○ offline";
-      el.className = "discord-status discord-status-off";
-    }
-  } catch (e) {
-    el.textContent = "";
-  }
-}
-
-
-async function saveLangSeparation() {
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        download_path: downloadPathInput.value.trim(),
-        lang_separation: langSeparationCb.checked,
-      }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
+  function renderApiKeys(keys) {
+    const body = el("apiKeysBody");
+    if (!keys.length) {
+      body.innerHTML = `<tr class="empty-row"><td colspan="6">${t("settings.no_keys", "No API keys yet.")}</td></tr>`;
       return;
     }
-    showToast(
-      "Language separation " +
-      (langSeparationCb.checked ? "enabled" : "disabled"),
-    );
 
-    let currentSyncLang = syncLanguageSelect ? syncLanguageSelect.value : null;
-    if (!langSeparationCb.checked && currentSyncLang === "All Languages") {
-      currentSyncLang = "German Dub";
-      updateSyncLanguageDropdown(false, currentSyncLang);
-      saveSyncDefaults();
-    } else {
-      updateSyncLanguageDropdown(langSeparationCb.checked, currentSyncLang);
+    body.innerHTML = keys
+      .map((key) => {
+        const scope = (SCOPE_LABELS[key.scope] || (() => key.scope))();
+        const expires = key.expired
+          ? `<span class="key-expired">${t("settings.api_key_expired", "Expired")}</span>`
+          : esc(key.expires_at ? formatKeyDate(key.expires_at) : t("settings.expiry_never", "Never expires"));
+        return `
+          <tr>
+            <td>${esc(key.name)}</td>
+            <td><code>${esc(key.prefix)}...</code></td>
+            <td>${esc(scope)}</td>
+            <td>${esc(formatKeyDate(key.last_used_at))}</td>
+            <td>${expires}</td>
+            <td>
+              <button class="btn btn-danger" data-delete-key="${key.id}"
+                data-name="${esc(key.name)}">${t("common.delete", "Delete")}</button>
+            </td>
+          </tr>`;
+      })
+      .join("");
+  }
+
+  async function loadApiKeys() {
+    try {
+      const data = await apiFetch("/api/keys");
+      renderApiKeys(data.keys || []);
+    } catch (error) {
+      showToast(error.message);
     }
-  } catch (e) {
-    showToast("Failed to save setting: " + e.message);
   }
-}
 
-function updateSyncLanguageDropdown(isLangSep, currentValue) {
-  if (!syncLanguageSelect) return;
-  syncLanguageSelect.innerHTML = "";
-  if (isLangSep) {
-    const opt = document.createElement("option");
-    opt.value = "All Languages";
-    opt.textContent = "All Languages";
-    syncLanguageSelect.appendChild(opt);
-  }
-  const langs = ["German Dub", "English Sub", "German Sub"];
-  langs.forEach((l) => {
-    const opt = document.createElement("option");
-    opt.value = l;
-    opt.textContent = l;
-    syncLanguageSelect.appendChild(opt);
-  });
-  if (currentValue) syncLanguageSelect.value = currentValue;
-}
+  el("addKeyBtn").addEventListener("click", async () => {
+    const name = el("newKeyName").value.trim();
+    if (!name) {
+      showToast(t("settings.key_name_required", "Give the key a name"));
+      return;
+    }
 
-function updateSyncProviderDropdown(providers, currentValue) {
-  if (!syncProviderSelect) return;
-  syncProviderSelect.innerHTML = "";
-  providers.forEach((provider) => {
-    const opt = document.createElement("option");
-    opt.value = provider;
-    opt.textContent = provider;
-    syncProviderSelect.appendChild(opt);
-  });
-  if (currentValue && providers.includes(currentValue)) {
-    syncProviderSelect.value = currentValue;
-  } else if (providers.length) {
-    syncProviderSelect.value = providers[0];
-  }
-}
-
-function renderProviderFallbackOrder(order) {
-  if (!providerFallbackOrderEl) return;
-
-  const normalized = Array.isArray(order) ? order.filter(Boolean) : [];
-  providerFallbackOrder = normalized.filter((provider) =>
-    availableProviders.includes(provider),
-  );
-
-  availableProviders.forEach((provider) => {
-    if (!providerFallbackOrder.includes(provider)) {
-      providerFallbackOrder.push(provider);
+    const button = el("addKeyBtn");
+    button.disabled = true;
+    try {
+      const data = await apiSend("/api/keys", "POST", {
+        name,
+        scope: el("newKeyScope").value,
+        expires_days: el("newKeyExpiry").value
+      });
+      el("newKeyName").value = "";
+      el("newKeyValue").textContent = data.key;
+      el("newKeyResult").hidden = false;
+      loadApiKeys();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
     }
   });
 
-  providerFallbackOrderEl.innerHTML = "";
-  if (!providerFallbackOrder.length) {
-    providerFallbackOrderEl.textContent = "No providers available";
-    return;
-  }
-
-  providerFallbackOrder.forEach((provider, index) => {
-    const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.alignItems = "center";
-    row.style.justifyContent = "space-between";
-    row.style.gap = "12px";
-    row.style.padding = "8px 0";
-    row.style.borderBottom = "1px solid rgba(255,255,255,.06)";
-
-    const label = document.createElement("span");
-    label.textContent = `${index + 1}. ${provider}`;
-
-    const controls = document.createElement("div");
-    controls.style.display = "flex";
-    controls.style.gap = "8px";
-
-    const up = document.createElement("button");
-    up.type = "button";
-    up.textContent = "Up";
-    up.disabled = index === 0;
-    up.onclick = () => moveProviderFallback(index, -1);
-
-    const down = document.createElement("button");
-    down.type = "button";
-    down.textContent = "Down";
-    down.disabled = index === providerFallbackOrder.length - 1;
-    down.onclick = () => moveProviderFallback(index, 1);
-
-    controls.appendChild(up);
-    controls.appendChild(down);
-    row.appendChild(label);
-    row.appendChild(controls);
-    providerFallbackOrderEl.appendChild(row);
+  el("copyKeyBtn").addEventListener("click", async () => {
+    const value = el("newKeyValue").textContent;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast(t("settings.copied", "Copied"));
+    } catch (error) {
+      // Clipboard needs https or localhost, select the text so it can be copied by hand
+      const range = document.createRange();
+      range.selectNodeContents(el("newKeyValue"));
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
   });
-}
 
-function moveProviderFallback(index, direction) {
-  const nextIndex = index + direction;
-  if (nextIndex < 0 || nextIndex >= providerFallbackOrder.length) return;
-  const updated = providerFallbackOrder.slice();
-  [updated[index], updated[nextIndex]] = [updated[nextIndex], updated[index]];
-  providerFallbackOrder = updated;
-  renderProviderFallbackOrder(providerFallbackOrder);
-  saveProviderFallbackOrder();
-}
+  el("apiKeysBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-delete-key]");
+    if (!button) return;
 
-async function saveDisableEnglishSub() {
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        disable_english_sub: disableEnglishSubCb.checked,
-      }),
+    const message = t("settings.confirm_delete_key", 'Delete API key "{name}"? Anything using it stops working.', {
+      name: button.dataset.name
     });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
+    if (!window.confirm(message)) return;
+
+    try {
+      await apiSend(`/api/keys/${button.dataset.deleteKey}`, "DELETE");
+      loadApiKeys();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  /* ===== Custom CSS ===== */
+  const cssBox = el("customCss");
+
+  function showCssSize() {
+    const bytes = new TextEncoder().encode(cssBox.value).length;
+    if (!bytes) {
+      el("cssSize").textContent = "";
       return;
     }
-    showToast(
-      "English Sub downloads " +
-      (disableEnglishSubCb.checked ? "disabled" : "enabled"),
-    );
-  } catch (e) {
-    showToast("Failed to save setting: " + e.message);
+    // a short theme in KB reads "0.0", which tells nobody anything
+    el("cssSize").textContent =
+      bytes < 1024
+        ? t("settings.css_size_bytes", "{size} bytes", { size: bytes })
+        : t("settings.css_size", "{size} KB", { size: (bytes / 1024).toFixed(1) });
   }
-}
 
-async function saveEnableHtv() {
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        enable_htv: enableHtvCb.checked,
-      }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
-    }
-    showToast("Hanime tab " + (enableHtvCb.checked ? "enabled" : "disabled"));
-  } catch (e) {
-    showToast("Failed to save setting: " + e.message);
-  }
-}
+  /* A browser drops a stylesheet that did not arrive as text/css, and says
+     nothing anywhere, so the only place this can be caught is here. */
+  function showCssWarnings(warnings) {
+    const box = el("cssWarning");
+    box.textContent = "";
+    box.hidden = !warnings || !warnings.length;
+    if (box.hidden) return;
 
-async function saveDownloadPath() {
-  const download_path = downloadPathInput.value.trim();
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ download_path }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
-    }
-    showToast("Anime download path saved");
-  } catch (e) {
-    showToast("Failed to save settings: " + e.message);
-  }
-}
-
-async function saveSeriesDownloadPath() {
-  const series_download_path = seriesDownloadPathInput.value.trim();
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ series_download_path }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
-    }
-    showToast("Series download path saved");
-  } catch (e) {
-    showToast("Failed to save settings: " + e.message);
-  }
-}
-
-async function saveMovieDownloadPath() {
-  const movie_download_path = movieDownloadPathInput.value.trim();
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ movie_download_path }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
-    }
-    showToast("Movie download path saved");
-  } catch (e) {
-    showToast("Failed to save settings: " + e.message);
-  }
-}
-
-loadSettings();
-refreshPublicIp();
-
-async function refreshPublicIp() {
-  if (!publicIpValue || !publicIpMeta || !refreshPublicIpBtn) return;
-  refreshPublicIpBtn.disabled = true;
-  publicIpValue.textContent = "Loading...";
-  publicIpValue.classList.remove("is-error");
-  publicIpMeta.textContent = "Checking current outbound IP address...";
-  try {
-    const resp = await fetch("/api/settings/public-ip", { cache: "no-store" });
-    const data = await resp.json();
-    if (!resp.ok || !data.ok || !data.ip) {
-      throw new Error(data.error || "Failed to fetch public IP");
-    }
-    publicIpValue.textContent = data.ip;
-    publicIpMeta.textContent =
-      "Updated at " + new Date().toLocaleTimeString([], { timeStyle: "medium" });
-  } catch (e) {
-    publicIpValue.textContent = "Unavailable";
-    publicIpValue.classList.add("is-error");
-    publicIpMeta.textContent = e.message;
-    showToast("Failed to fetch public IP: " + e.message);
-  } finally {
-    refreshPublicIpBtn.disabled = false;
-  }
-}
-
-async function saveSyncSchedule() {
-  if (!syncScheduleSelect) return;
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sync_schedule: syncScheduleSelect.value }),
-    });
-    const data = await resp.json();
-    if (data.ok) showToast("Auto-Sync schedule saved");
-    else showToast("Failed to save schedule");
-  } catch (e) {
-    showToast("Failed to save schedule: " + e.message);
-  }
-}
-
-async function saveSyncDefaults() {
-  const body = {};
-  if (syncLanguageSelect) body.sync_language = syncLanguageSelect.value;
-  if (syncProviderSelect) body.sync_provider = syncProviderSelect.value;
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    if (data.ok) showToast("Auto-Sync defaults saved");
-    else showToast("Failed to save defaults");
-  } catch (e) {
-    showToast("Failed to save defaults: " + e.message);
-  }
-}
-
-async function saveProviderFallbackOrder() {
-  try {
-    const resp = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider_fallback_order: providerFallbackOrder }),
-    });
-    const data = await resp.json();
-    if (data.ok) showToast("Provider fallback order saved");
-    else showToast(data.error || "Failed to save provider fallback order");
-  } catch (e) {
-    showToast("Failed to save provider fallback order: " + e.message);
-  }
-}
-
-// Custom paths management
-const customPathsBody = document.getElementById("customPathsBody");
-const customPathsTable = document.getElementById("customPathsTable");
-
-if (customPathsBody) {
-  loadCustomPaths();
-}
-
-async function loadCustomPaths() {
-  if (!customPathsBody) return;
-  try {
-    const resp = await fetch("/api/custom-paths");
-    const data = await resp.json();
-    renderCustomPaths(data.paths || []);
-  } catch (e) {
-    showToast("Failed to load custom paths: " + e.message);
-  }
-}
-
-const PATH_SITE_OPTIONS = [
-  ["aniworld", "AniWorld"],
-  ["sto", "SerienStream"],
-  ["megakino", "MegaKino"],
-  ["kinox", "Kinox"],
-  ["burningseries", "BurningSeries"],
-  ["filmpalast", "FilmPalast"],
-  ["filmo", "Filmo"],
-  ["mangafire", "MangaFire"],
-  ["htv", "Hanime"],
-  ["cineby", "Cineby"],
-];
-
-function renderCustomPaths(paths) {
-  customPathsBody.innerHTML = "";
-  if (!paths.length) {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      '<td colspan="4" style="color:#6b7280;text-align:center">No custom paths</td>';
-    customPathsBody.appendChild(tr);
-    return;
-  }
-  paths.forEach(function (p) {
-    const active = (p.default_sites || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const chips = PATH_SITE_OPTIONS.map(function ([key, label]) {
-      const checked = active.includes(key) ? "checked" : "";
-      return (
-        '<label class="path-site-chip">' +
-        '<input type="checkbox" ' +
-        checked +
-        ' onchange="togglePathSite(' +
-        p.id +
-        ",'" +
-        key +
-        "',this.checked)\"> " +
-        esc(label) +
-        "</label>"
+    warnings.forEach((warning) => {
+      const line = document.createElement("p");
+      line.textContent = t(
+        "settings.css_import_blocked",
+        "{host} sends files as plain text, so browsers ignore this import.",
+        { host: warning.host }
       );
-    }).join("");
+      box.appendChild(line);
 
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>" +
-      esc(p.name) +
-      "</td>" +
-      "<td style=\"font-family:'SF Mono','Fira Code',monospace;font-size:.82rem\">" +
-      esc(p.path) +
-      "</td>" +
-      '<td><div class="path-site-chips">' +
-      chips +
-      "</div></td>" +
-      '<td><button class="btn-del" onclick="deleteCustomPath(' +
-      p.id +
-      ')">Delete</button></td>';
-    customPathsBody.appendChild(tr);
+      if (!warning.suggestion) return;
+      const fix = document.createElement("p");
+      fix.textContent = `${t("settings.css_import_try", "Use this instead:")} `;
+      const code = document.createElement("code");
+      code.textContent = warning.suggestion;
+      fix.appendChild(code);
+      box.appendChild(fix);
+    });
+  }
+
+  /* Point the tag at the new hash so the browser fetches the saved sheet
+     instead of the cached one, and drop it entirely once the box is empty. */
+  function applyCustomCss(version) {
+    const existing = document.querySelector("link[data-custom-css]");
+    if (!version) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      existing.href = `/custom.css?v=${version}`;
+      return;
+    }
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.dataset.customCss = "1";
+    link.href = `/custom.css?v=${version}`;
+    document.head.appendChild(link);
+  }
+
+  async function loadCustomCss() {
+    try {
+      const data = await apiFetch("/api/custom-css");
+      cssBox.value = data.css || "";
+      showCssSize();
+      showCssWarnings(data.warnings);
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  async function saveCustomCss() {
+    try {
+      const data = await apiSend("/api/custom-css", "PUT", { css: cssBox.value });
+      // the server hoists imports, so show back what it actually stored
+      cssBox.value = data.css || "";
+      showCssSize();
+      showCssWarnings(data.warnings);
+      applyCustomCss(data.version);
+      showToast(t("settings.saved", "Saved"));
+    } catch (error) {
+      showToast(`${t("settings.save_failed", "Could not save")}: ${error.message}`);
+    }
+  }
+
+  cssBox.addEventListener("input", showCssSize);
+  el("saveCssBtn").addEventListener("click", saveCustomCss);
+  el("resetCssBtn").addEventListener("click", () => {
+    cssBox.value = "";
+    saveCustomCss();
   });
-}
 
-async function togglePathSite(pathId, siteKey, enabled) {
-  try {
-    const resp = await fetch("/api/custom-paths");
-    const data = await resp.json();
-    const path = (data.paths || []).find((p) => p.id === pathId);
-    const active = new Set(
-      (path && path.default_sites ? path.default_sites : "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    );
-    if (enabled) active.add(siteKey);
-    else active.delete(siteKey);
+  /* ===== Background shader =====
+     Compiled here before it is saved, purely so a mistake comes back as a GLSL
+     error with a line number instead of a black screen. The server stores the
+     source and never runs it. */
+  const shaderBox = el("customShader");
 
-    const save = await fetch("/api/custom-paths/" + pathId, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ default_sites: Array.from(active) }),
-    });
-    const result = await save.json();
-    if (result.error) showToast(result.error);
-  } catch (e) {
-    showToast("Failed to update default sites: " + e.message);
+  const SHADER_PRELUDE = `#version 300 es
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+out vec4 fragColor;
+`;
+
+  function compileShader(source) {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl2");
+    if (!gl) return { ok: true, skipped: true };
+
+    const shader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(shader, SHADER_PRELUDE + source);
+    gl.compileShader(shader);
+    const ok = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+    const log = ok ? "" : gl.getShaderInfoLog(shader) || "";
+    gl.deleteShader(shader);
+    // the prelude sits above the author's code, so reported lines are offset
+    const offset = SHADER_PRELUDE.split("\n").length - 1;
+    return {
+      ok,
+      log: log.replace(/(\d+):(\d+)/g, (m, col, line) => `${col}:${line - offset}`)
+    };
   }
-}
 
-async function addCustomPath() {
-  const name = document.getElementById("newPathName").value.trim();
-  const path = document.getElementById("newPathValue").value.trim();
-  if (!name || !path) {
-    showToast("Name and path are required");
-    return;
+  function showShaderError(text) {
+    const box = el("shaderError");
+    box.textContent = text || "";
+    box.hidden = !text;
   }
-  try {
-    const resp = await fetch("/api/custom-paths", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name, path: path }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
+
+  function applyShader(version) {
+    const existing = document.getElementById("themeShader");
+    if (existing) existing.remove();
+    if (!version) return;
+    // the runner is only on the page once a shader exists, so reload to start it
+    showToast(t("settings.shader_reload", "Saved. Reload to see it."));
+  }
+
+  async function loadShader() {
+    if (!shaderBox) return;
+    try {
+      const data = await apiFetch("/api/custom-shader");
+      shaderBox.value = data.shader || "";
+      showShaderError("");
+    } catch (error) {
+      showToast(error.message);
     }
-    document.getElementById("newPathName").value = "";
-    document.getElementById("newPathValue").value = "";
-    showToast("Custom path added");
-    loadCustomPaths();
-  } catch (e) {
-    showToast("Failed to add custom path: " + e.message);
   }
-}
 
-async function deleteCustomPath(id) {
-  if (!confirm("Delete this custom path?")) return;
-  try {
-    const resp = await fetch("/api/custom-paths/" + id, { method: "DELETE" });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
+  async function saveShader() {
+    const source = shaderBox.value.trim();
+    if (source) {
+      const result = compileShader(source);
+      if (!result.ok) {
+        showShaderError(result.log.trim());
+        el("shaderStatus").textContent = t("settings.shader_bad", "Not saved");
+        return;
+      }
     }
-    showToast("Custom path deleted");
-    loadCustomPaths();
-  } catch (e) {
-    showToast("Failed to delete custom path: " + e.message);
+    showShaderError("");
+    try {
+      const data = await apiSend("/api/custom-shader", "PUT", { shader: source });
+      shaderBox.value = data.shader || "";
+      el("shaderStatus").textContent = "";
+      applyShader(data.version);
+      if (!data.version) showToast(t("settings.saved", "Saved"));
+    } catch (error) {
+      showToast(`${t("settings.save_failed", "Could not save")}: ${error.message}`);
+    }
   }
-}
 
-// User management (only runs if the user table exists)
-const userTableBody = document.getElementById("userTableBody");
-
-if (userTableBody) {
-  loadUsers();
-}
-
-async function loadUsers() {
-  if (!userTableBody) return;
-  try {
-    const resp = await fetch("/admin/api/users");
-    const data = await resp.json();
-    renderUsers(data.users || []);
-  } catch (e) {
-    showToast("Failed to load users: " + e.message);
+  if (shaderBox) {
+    el("saveShaderBtn").addEventListener("click", saveShader);
+    el("clearShaderBtn").addEventListener("click", () => {
+      shaderBox.value = "";
+      saveShader();
+    });
+    shaderBox.addEventListener("input", () => {
+      showShaderError("");
+      el("shaderStatus").textContent = "";
+    });
   }
-}
 
-function renderUsers(users) {
-  const adminCount = users.filter((u) => u.role === "admin").length;
-  userTableBody.innerHTML = "";
-  users.forEach((u) => {
-    const isLastAdmin = u.role === "admin" && adminCount <= 1;
-    const tr = document.createElement("tr");
-    const authMethod = u.auth_method || "local";
-    const authBadge =
-      authMethod === "oidc"
-        ? '<span class="auth-badge auth-sso">SSO</span>'
-        : '<span class="auth-badge auth-local">Local</span>';
-    tr.innerHTML =
-      `<td>${u.id}</td>` +
-      `<td>${esc(u.username)}</td>` +
-      `<td>
-        <select onchange="changeRole(${u.id}, this.value)" ${isLastAdmin ? "disabled" : ""}>
-          <option value="user" ${u.role === "user" ? "selected" : ""}>User</option>
-          <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
-        </select>
-      </td>` +
-      `<td>${authBadge}</td>` +
-      `<td>${esc(u.created_at)}</td>` +
-      `<td>${isLastAdmin
-        ? '<span style="color:#555">protected</span>'
-        : `<button class="btn-del" onclick="deleteUser(${u.id})">Delete</button>`
-      }</td>`;
-    userTableBody.appendChild(tr);
+  /* ===== IP check (never runs on its own) ===== */
+  el("revealIpBtn").addEventListener("click", async () => {
+    const value = el("publicIpValue");
+    const meta = el("publicIpMeta");
+    const button = el("revealIpBtn");
+
+    button.disabled = true;
+    value.textContent = t("settings.ip_loading", "Looking up...");
+    meta.textContent = "";
+    try {
+      const data = await apiFetch("/api/settings/public-ip");
+      value.textContent = data.ip;
+      meta.textContent = t("settings.ip_source", "Source: {source}", {
+        source: data.source
+      });
+      button.textContent = t("common.refresh", "Refresh");
+    } catch (error) {
+      value.textContent = t("settings.ip_failed", "Could not resolve IP");
+      meta.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
   });
-}
 
-async function addUser() {
-  const username = document.getElementById("newUsername").value.trim();
-  const password = document.getElementById("newPassword").value;
-  const role = document.getElementById("newRole").value;
-
-  if (!username || !password) {
-    showToast("Username and password required");
-    return;
-  }
-
-  try {
-    const resp = await fetch("/admin/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, role }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
-    }
-    document.getElementById("newUsername").value = "";
-    document.getElementById("newPassword").value = "";
-    showToast("User created");
-    loadUsers();
-  } catch (e) {
-    showToast("Failed to create user: " + e.message);
-  }
-}
-
-async function deleteUser(id) {
-  if (!confirm("Delete this user?")) return;
-  try {
-    const resp = await fetch(`/admin/api/users/${id}`, { method: "DELETE" });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      return;
-    }
-    showToast("User deleted");
-    loadUsers();
-  } catch (e) {
-    showToast("Failed to delete user: " + e.message);
-  }
-}
-
-async function changeRole(id, newRole) {
-  try {
-    const resp = await fetch(`/admin/api/users/${id}/role`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role: newRole }),
-    });
-    const data = await resp.json();
-    if (data.error) {
-      showToast(data.error);
-      loadUsers();
-      return;
-    }
-    showToast("Role updated");
-    loadUsers();
-  } catch (e) {
-    showToast("Failed to update role: " + e.message);
-  }
-}
-
-function showToast(msg) {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.style.display = "block";
-  setTimeout(() => (t.style.display = "none"), 4000);
-}
-
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s || "";
-  return d.innerHTML;
-}
+  load();
+  loadCustomCss();
+  loadShader();
+  loadCustomPaths();
+  loadDiscordStatus();
+  loadApiKeys();
+})();

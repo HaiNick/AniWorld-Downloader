@@ -40,7 +40,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/ms-playwright \
     pip install patchright && \
-    python -m patchright install chromium && \
+    python -m patchright install chromium --no-shell && \
     rm -rf /ms-playwright/ffmpeg-* && \
     find /ms-playwright -name "*.pak*" | grep -vE "(resources|chrome_100|chrome_200|de|en-US|en-GB)\.pak" | xargs -r rm -f && \
     chmod -R a+rX /ms-playwright && \
@@ -122,7 +122,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     libxcb1 \
     libxext6
 
-# Copy virtual env, playwright browsers, and compressed static ffmpeg/ffprobe from builder stage
+# Copy virtual env and playwright browsers from builder stage. ffmpeg is not in
+# here, the runner installs it from apt above.
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /ms-playwright /ms-playwright
 
