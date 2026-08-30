@@ -1,3 +1,4 @@
+import functools
 import getpass
 import hashlib
 import os
@@ -592,6 +593,113 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
         raise RuntimeError(f"ffmpeg error (rc={process.returncode}): {detail}")
 
 
+@functools.lru_cache(maxsize=1)
+def _frame_timing_flag():
+    """`-fps_mode` on FFmpeg 5.1 and newer, `-vsync` on the builds without it."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-h", "full"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "vsync"
+    return "fps_mode" if "-fps_mode" in (result.stdout or "") else "vsync"
+
+
+def _video_output_kwargs(video_codec):
+    """Output kwargs for the video stream, keeping the source frame timing.
+
+    A re-encode otherwise lands on the constant frame rate FFmpeg guesses from
+    the input and duplicates or drops frames to reach it. The variable-rate
+    streams these hosters ship then walk out of sync with the copied audio over
+    the length of an episode. A stream copy already carries the source
+    timestamps, so it needs nothing.
+    """
+    if video_codec == "copy":
+        return {"vcodec": "copy"}
+    return {"vcodec": video_codec, _frame_timing_flag(): "passthrough"}
+
+
+# Two renditions of one stream never sit further apart than this. A larger
+# difference means the files are not on a shared clock at all, so their start
+# times say nothing about how the tracks belong together.
+MAX_RENDITION_OFFSET = 2.0
+
+
+def get_audio_offset():
+    """Manual audio nudge in seconds. Positive delays the audio."""
+    raw = os.getenv("ANIWORLD_AUDIO_OFFSET", "0")
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError):
+        logger.warning(f"Invalid ANIWORLD_AUDIO_OFFSET '{raw}', ignoring it")
+        return 0.0
+
+
+def _stream_start_time(path, codec_type):
+    """First timestamp of a local file's video or audio stream, in seconds.
+
+    Returns None when nothing usable comes back, which includes an FFprobe that
+    is not installed. Callers then leave the timestamps alone.
+    """
+    try:
+        probe = ffmpeg.probe(str(path))
+    except (ffmpeg.Error, OSError, ValueError):
+        return None
+
+    candidates = [
+        stream.get("start_time")
+        for stream in probe.get("streams", [])
+        if stream.get("codec_type") == codec_type
+    ]
+    candidates.append((probe.get("format") or {}).get("start_time"))
+    for raw in candidates:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _rendition_audio_offset(video_path, audio_path):
+    """Seconds to shift the audio rendition by so it lands where it belongs.
+
+    A separate audio rendition arrives as its own file, and FFmpeg rebases each
+    input to zero on its own. Whatever offset the packager put between the two
+    renditions is lost in that rebasing, and the finished episode is off by that
+    same amount from the first second to the last. Measuring both start times
+    recovers it.
+    """
+    offset = get_audio_offset()
+    if audio_path is None:
+        return offset
+
+    video_start = _stream_start_time(video_path, "video")
+    audio_start = _stream_start_time(audio_path, "audio")
+    if video_start is None or audio_start is None:
+        return offset
+
+    drift = audio_start - video_start
+    if abs(drift) > MAX_RENDITION_OFFSET:
+        logger.debug(
+            f"[MUXING] renditions start {drift:.3f}s apart, so their clocks are "
+            "unrelated and the audio is left where FFmpeg puts it"
+        )
+        return offset
+    return offset + drift
+
+
+def _audio_rendition_input(audio_path, offset):
+    """Open an audio rendition, shifted by `offset` seconds when that matters."""
+    if abs(offset) < 0.001:
+        return ffmpeg.input(str(audio_path))
+    logger.debug(f"[MUXING] shifting the audio by {offset:+.3f}s")
+    return ffmpeg.input(str(audio_path), itsoffset=offset)
+
+
 def movie_folder_enabled():
     """Whether movies get their own folder instead of landing in the root."""
     return os.getenv("ANIWORLD_MOVIE_FOLDER", "1") != "0"
@@ -758,19 +866,20 @@ def _download_hls_stream(episode_path, stream_url, file_name, audio_lang="jpn"):
 
         if written:
             if len(written) > 1:
+                offset = _rendition_audio_offset(written[0], written[1])
                 node = ffmpeg.output(
                     ffmpeg.input(str(written[0])).video,
-                    ffmpeg.input(str(written[1])).audio,
+                    _audio_rendition_input(written[1], offset).audio,
                     str(temp_full),
-                    vcodec=video_codec,
                     acodec="copy",
+                    **_video_output_kwargs(video_codec),
                     **{"metadata:s:a:0": f"language={audio_lang}"},
                 )
             else:
                 node = ffmpeg.input(str(written[0])).output(
                     str(temp_full),
-                    vcodec=video_codec,
                     acodec="copy",
+                    **_video_output_kwargs(video_codec),
                     **{"metadata:s:a:0": f"language={audio_lang}"},
                 )
             _run_ffmpeg_with_progress(node, label=ep_label)
@@ -854,6 +963,8 @@ def _fetch_hls_segment(session, seg_url, headers, hosts, timeout=90):
     """
     from urllib.parse import urlparse, urlunparse
 
+    from .hls import expected_body_length
+
     parsed = urlparse(seg_url)
     ordered = [parsed.netloc] + [h for h in hosts if h and h != parsed.netloc]
     last_exc = None
@@ -863,7 +974,16 @@ def _fetch_hls_segment(session, seg_url, headers, hosts, timeout=90):
             try:
                 resp = session.get(url, headers=headers, timeout=timeout)
                 resp.raise_for_status()
-                return resp.content
+                content = resp.content
+                expected = expected_body_length(resp)
+                if expected is not None and len(content) != expected:
+                    # A short segment loses whole frames, and audio and video do
+                    # not lose the same amount of them, so the tracks slip apart.
+                    # Another mirror serves the same path, so try that instead.
+                    raise ValueError(
+                        f"truncated segment: {len(content)} of {expected} bytes"
+                    )
+                return content
             except Exception as exc:
                 last_exc = exc
         if attempt == 0:
@@ -916,6 +1036,13 @@ def _download_hls_manual(m3u8_url, headers, temp_ts, label=""):
 
     if "#EXT-X-KEY" in playlist:
         raise _HLSManualUnsupported("encrypted playlist")
+
+    from .hls import playlist_has_discontinuity
+
+    if playlist_has_discontinuity(playlist):
+        # Concatenating across the splice hands FFmpeg a timestamp jump that
+        # audio and video recover from differently; its HLS demuxer rebases.
+        raise _HLSManualUnsupported("playlist splices timelines")
 
     segments = _hls_uris(playlist, m3u8_url)
     if not segments:
@@ -1024,8 +1151,8 @@ def _download_full_stream(
                 _run_ffmpeg_with_progress(
                     ffmpeg.input(str(temp_ts)).output(
                         str(temp_full),
-                        vcodec=video_codec,
                         acodec="copy",
+                        **_video_output_kwargs(video_codec),
                         **stream_metadata,
                     ),
                     label=ep_label,
@@ -1037,8 +1164,8 @@ def _download_full_stream(
     _run_ffmpeg_with_progress(
         ffmpeg.input(stream_url, **input_kwargs).output(
             str(temp_full),
-            vcodec=video_codec,
             acodec="copy",
+            **_video_output_kwargs(video_codec),
             **stream_metadata,
         ),
         label=ep_label,
@@ -1161,19 +1288,24 @@ def download(self):
                             video_path, audio_path = result
                             try:
                                 if audio_path is not None:
+                                    offset = _rendition_audio_offset(
+                                        video_path, audio_path
+                                    )
                                     node = ffmpeg.output(
                                         ffmpeg.input(str(video_path)).video,
-                                        ffmpeg.input(str(audio_path)).audio,
+                                        _audio_rendition_input(
+                                            audio_path, offset
+                                        ).audio,
                                         str(temp_full),
-                                        vcodec=video_codec,
-                                        acodec=video_codec,
+                                        acodec="copy",
+                                        **_video_output_kwargs(video_codec),
                                         **stream_metadata,
                                     )
                                 else:
                                     node = ffmpeg.input(str(video_path)).output(
                                         str(temp_full),
-                                        vcodec=video_codec,
-                                        acodec=video_codec,
+                                        acodec="copy",
+                                        **_video_output_kwargs(video_codec),
                                         **stream_metadata,
                                     )
                                 _run_ffmpeg_with_progress(node, label=ep_label)
@@ -1212,7 +1344,6 @@ def download(self):
 
                 if need_audio:
                     logger.debug(f"[DOWNLOADING] audio stream via {provider_name}")
-                    video_codec = get_video_codec()
                     audio_done = False
                     if select_rendition:
                         # Pull just the wanted audio rendition (e.g. the German
@@ -1224,13 +1355,14 @@ def download(self):
                             stream_url, temp_prefix, headers, audio_code, ep_label
                         )
                         if result is not None:
-                            _, audio_path = result
-                            audio_src = audio_path or result[0]
+                            video_path, audio_path = result
+                            audio_src = audio_path or video_path
+                            offset = _rendition_audio_offset(video_path, audio_path)
                             try:
                                 _run_ffmpeg_with_progress(
-                                    ffmpeg.input(str(audio_src)).output(
+                                    _audio_rendition_input(audio_src, offset).output(
                                         str(temp_audio),
-                                        acodec=video_codec,
+                                        acodec="copy",
                                         map="0:a:0?",
                                         **{"metadata:s:a:0": f"language={audio_code}"},
                                     ),
@@ -1243,7 +1375,7 @@ def download(self):
                         _run_ffmpeg_with_progress(
                             ffmpeg.input(stream_url, **input_kwargs).output(
                                 str(temp_audio),
-                                acodec=video_codec,
+                                acodec="copy",
                                 map="0:a:0?",
                                 **{"metadata:s:a:0": f"language={audio_code}"},
                             ),
@@ -1256,8 +1388,8 @@ def download(self):
                     _run_ffmpeg_with_progress(
                         ffmpeg.input(stream_url, **input_kwargs).output(
                             str(temp_video),
-                            vcodec=video_codec,
                             map="0:v:0?",
+                            **_video_output_kwargs(video_codec),
                             **(
                                 {}
                                 if wants_clean_video

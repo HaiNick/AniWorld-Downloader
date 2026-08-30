@@ -52,6 +52,43 @@ _LANG_NAME_HINTS = {
 
 _ATTR_RE = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)')
 
+_DISCONTINUITY_TAG = "#EXT-X-DISCONTINUITY"
+
+
+def playlist_has_discontinuity(text):
+    """Whether a media playlist splices in segments with their own timeline.
+
+    Segments on either side of an `#EXT-X-DISCONTINUITY` carry unrelated
+    timestamps, so concatenating them into one file hands FFmpeg a timestamp
+    jump it recovers from differently for audio than for video, and the two
+    tracks drift apart from the splice onwards. Callers fall back to FFmpeg's
+    own HLS demuxer, which rebases across the boundary instead.
+
+    `#EXT-X-DISCONTINUITY-SEQUENCE` is a header, not a splice, so it does not
+    count.
+    """
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line == _DISCONTINUITY_TAG or line.startswith(f"{_DISCONTINUITY_TAG}:"):
+            return True
+    return False
+
+
+def expected_body_length(response):
+    """The body length the server promised, when it is comparable to what came.
+
+    Returns None whenever the comparison would be meaningless: no
+    `Content-Length`, or a compressed body whose decoded size legitimately
+    differs from the header.
+    """
+    encoding = (response.headers.get("Content-Encoding") or "identity").lower()
+    if encoding not in ("", "identity"):
+        return None
+    try:
+        return int(response.headers["Content-Length"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
 
 def get_concurrency():
     """Read the configured segment concurrency, clamped to a sane range."""
@@ -139,6 +176,13 @@ def _fetch_bytes(url, headers):
             content = resp.content
             if not content:
                 raise ValueError("empty response body")
+            expected = expected_body_length(resp)
+            if expected is not None and len(content) != expected:
+                # A short segment loses whole frames, and audio and video do not
+                # lose the same amount of them, so the tracks slip apart.
+                raise ValueError(
+                    f"truncated segment: {len(content)} of {expected} bytes"
+                )
             return content
         except Exception as err:
             last_error = err
@@ -265,6 +309,9 @@ def _parse_media_playlist(text, base_url):
     """Return (segments, init_uri) where each segment is (uri, key, sequence)."""
     if "#EXT-X-ENDLIST" not in text:
         raise HLSUnsupported("live playlist (no EXT-X-ENDLIST)")
+
+    if playlist_has_discontinuity(text):
+        raise HLSUnsupported("playlist splices timelines (EXT-X-DISCONTINUITY)")
 
     segments = []
     init_uri = None
