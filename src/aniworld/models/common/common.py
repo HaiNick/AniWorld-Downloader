@@ -1,3 +1,4 @@
+import functools
 import getpass
 import hashlib
 import os
@@ -592,6 +593,36 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
         raise RuntimeError(f"ffmpeg error (rc={process.returncode}): {detail}")
 
 
+@functools.lru_cache(maxsize=1)
+def _frame_timing_flag():
+    """`-fps_mode` on FFmpeg 5.1 and newer, `-vsync` on the builds without it."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-h", "full"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "vsync"
+    return "fps_mode" if "-fps_mode" in (result.stdout or "") else "vsync"
+
+
+def _video_output_kwargs(video_codec):
+    """Output kwargs for the video stream, keeping the source frame timing.
+
+    A re-encode otherwise lands on the constant frame rate FFmpeg guesses from
+    the input and duplicates or drops frames to reach it. The variable-rate
+    streams these hosters ship then walk out of sync with the copied audio over
+    the length of an episode. A stream copy already carries the source
+    timestamps, so it needs nothing.
+    """
+    if video_codec == "copy":
+        return {"vcodec": "copy"}
+    return {"vcodec": video_codec, _frame_timing_flag(): "passthrough"}
+
+
 def movie_folder_enabled():
     """Whether movies get their own folder instead of landing in the root."""
     return os.getenv("ANIWORLD_MOVIE_FOLDER", "1") != "0"
@@ -762,15 +793,15 @@ def _download_hls_stream(episode_path, stream_url, file_name, audio_lang="jpn"):
                     ffmpeg.input(str(written[0])).video,
                     ffmpeg.input(str(written[1])).audio,
                     str(temp_full),
-                    vcodec=video_codec,
                     acodec="copy",
+                    **_video_output_kwargs(video_codec),
                     **{"metadata:s:a:0": f"language={audio_lang}"},
                 )
             else:
                 node = ffmpeg.input(str(written[0])).output(
                     str(temp_full),
-                    vcodec=video_codec,
                     acodec="copy",
+                    **_video_output_kwargs(video_codec),
                     **{"metadata:s:a:0": f"language={audio_lang}"},
                 )
             _run_ffmpeg_with_progress(node, label=ep_label)
@@ -854,6 +885,8 @@ def _fetch_hls_segment(session, seg_url, headers, hosts, timeout=90):
     """
     from urllib.parse import urlparse, urlunparse
 
+    from .hls import expected_body_length
+
     parsed = urlparse(seg_url)
     ordered = [parsed.netloc] + [h for h in hosts if h and h != parsed.netloc]
     last_exc = None
@@ -863,7 +896,16 @@ def _fetch_hls_segment(session, seg_url, headers, hosts, timeout=90):
             try:
                 resp = session.get(url, headers=headers, timeout=timeout)
                 resp.raise_for_status()
-                return resp.content
+                content = resp.content
+                expected = expected_body_length(resp)
+                if expected is not None and len(content) != expected:
+                    # A short segment loses whole frames, and audio and video do
+                    # not lose the same amount of them, so the tracks slip apart.
+                    # Another mirror serves the same path, so try that instead.
+                    raise ValueError(
+                        f"truncated segment: {len(content)} of {expected} bytes"
+                    )
+                return content
             except Exception as exc:
                 last_exc = exc
         if attempt == 0:
@@ -916,6 +958,13 @@ def _download_hls_manual(m3u8_url, headers, temp_ts, label=""):
 
     if "#EXT-X-KEY" in playlist:
         raise _HLSManualUnsupported("encrypted playlist")
+
+    from .hls import playlist_has_discontinuity
+
+    if playlist_has_discontinuity(playlist):
+        # Concatenating across the splice hands FFmpeg a timestamp jump that
+        # audio and video recover from differently; its HLS demuxer rebases.
+        raise _HLSManualUnsupported("playlist splices timelines")
 
     segments = _hls_uris(playlist, m3u8_url)
     if not segments:
@@ -1024,8 +1073,8 @@ def _download_full_stream(
                 _run_ffmpeg_with_progress(
                     ffmpeg.input(str(temp_ts)).output(
                         str(temp_full),
-                        vcodec=video_codec,
                         acodec="copy",
+                        **_video_output_kwargs(video_codec),
                         **stream_metadata,
                     ),
                     label=ep_label,
@@ -1037,8 +1086,8 @@ def _download_full_stream(
     _run_ffmpeg_with_progress(
         ffmpeg.input(stream_url, **input_kwargs).output(
             str(temp_full),
-            vcodec=video_codec,
             acodec="copy",
+            **_video_output_kwargs(video_codec),
             **stream_metadata,
         ),
         label=ep_label,
@@ -1165,15 +1214,15 @@ def download(self):
                                         ffmpeg.input(str(video_path)).video,
                                         ffmpeg.input(str(audio_path)).audio,
                                         str(temp_full),
-                                        vcodec=video_codec,
-                                        acodec=video_codec,
+                                        acodec="copy",
+                                        **_video_output_kwargs(video_codec),
                                         **stream_metadata,
                                     )
                                 else:
                                     node = ffmpeg.input(str(video_path)).output(
                                         str(temp_full),
-                                        vcodec=video_codec,
-                                        acodec=video_codec,
+                                        acodec="copy",
+                                        **_video_output_kwargs(video_codec),
                                         **stream_metadata,
                                     )
                                 _run_ffmpeg_with_progress(node, label=ep_label)
@@ -1212,7 +1261,6 @@ def download(self):
 
                 if need_audio:
                     logger.debug(f"[DOWNLOADING] audio stream via {provider_name}")
-                    video_codec = get_video_codec()
                     audio_done = False
                     if select_rendition:
                         # Pull just the wanted audio rendition (e.g. the German
@@ -1230,7 +1278,7 @@ def download(self):
                                 _run_ffmpeg_with_progress(
                                     ffmpeg.input(str(audio_src)).output(
                                         str(temp_audio),
-                                        acodec=video_codec,
+                                        acodec="copy",
                                         map="0:a:0?",
                                         **{"metadata:s:a:0": f"language={audio_code}"},
                                     ),
@@ -1243,7 +1291,7 @@ def download(self):
                         _run_ffmpeg_with_progress(
                             ffmpeg.input(stream_url, **input_kwargs).output(
                                 str(temp_audio),
-                                acodec=video_codec,
+                                acodec="copy",
                                 map="0:a:0?",
                                 **{"metadata:s:a:0": f"language={audio_code}"},
                             ),
@@ -1256,8 +1304,8 @@ def download(self):
                     _run_ffmpeg_with_progress(
                         ffmpeg.input(stream_url, **input_kwargs).output(
                             str(temp_video),
-                            vcodec=video_codec,
                             map="0:v:0?",
+                            **_video_output_kwargs(video_codec),
                             **(
                                 {}
                                 if wants_clean_video
