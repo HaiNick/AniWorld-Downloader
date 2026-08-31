@@ -7,10 +7,12 @@ to zero. Each one reaches the finished episode as audio that is off, so each
 one is pinned here.
 """
 
+from pathlib import Path
+
 import ffmpeg
 import pytest
 
-from aniworld.models.common import common
+from aniworld.models.common import common, hls
 from aniworld.models.common.common import _video_output_kwargs
 from aniworld.models.common.hls import (
     HLSUnsupported,
@@ -64,12 +66,21 @@ def test_the_discontinuity_sequence_header_is_not_a_splice():
 
 
 def test_a_plain_playlist_still_parses():
-    segments, init_uri = _parse_media_playlist(PLAIN_PLAYLIST, BASE_URL)
+    segments, init_uri, seconds = _parse_media_playlist(PLAIN_PLAYLIST, BASE_URL)
     assert [uri for uri, _key, _seq in segments] == [
         "https://cdn.example/hls/seg0.ts",
         "https://cdn.example/hls/seg1.ts",
     ]
     assert init_uri is None
+    assert seconds == pytest.approx(8.0)
+
+
+def test_playing_time_adds_up_across_uneven_segments():
+    playlist = PLAIN_PLAYLIST.replace(
+        "#EXTINF:4.000,\nseg1.ts", "#EXTINF:2.5,\nseg1.ts"
+    )
+    _segments, _init_uri, seconds = _parse_media_playlist(playlist, BASE_URL)
+    assert seconds == pytest.approx(6.5)
 
 
 def test_a_spliced_playlist_goes_back_to_ffmpeg():
@@ -233,3 +244,57 @@ def test_no_offset_leaves_the_command_untouched():
         common._audio_rendition_input("audio.ts", 0.0).output("out.mkv")
     )
     assert "-itsoffset" not in args
+
+
+# ---------------------------------------------------------------------------
+# Renditions that are different cuts
+# ---------------------------------------------------------------------------
+MASTER_PLAYLIST = """#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a0",LANGUAGE="de",NAME="German",URI="audio_de.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=2996000,AUDIO="a0"
+v1080.m3u8
+"""
+
+
+class _Recorder:
+    def __init__(self):
+        self.warnings = []
+
+    def warning(self, message):
+        self.warnings.append(message)
+
+    def debug(self, message):
+        pass
+
+
+def _run_parallel(monkeypatch, video_seconds, audio_seconds):
+    recorder = _Recorder()
+    monkeypatch.setattr(hls, "logger", recorder)
+    monkeypatch.setattr(hls, "_fetch_text", lambda url, headers: MASTER_PLAYLIST)
+
+    lengths = {".hls_video": video_seconds, ".hls_audio": audio_seconds}
+
+    def fake_download(_url, _headers, prefix, suffix, _factory):
+        return Path(f"{prefix}{suffix}"), lengths[suffix]
+
+    monkeypatch.setattr(hls, "_download_playlist", fake_download)
+
+    written = hls.download_hls_parallel(
+        "https://cdn.example/hls/master.m3u8",
+        Path("episode"),
+        preferred_audio_lang="deu",
+    )
+    return written, recorder
+
+
+def test_matching_renditions_download_quietly(monkeypatch):
+    written, recorder = _run_parallel(monkeypatch, 1420.0, 1420.0)
+    assert len(written) == 2
+    assert recorder.warnings == []
+
+
+def test_an_audio_rendition_of_another_cut_is_called_out(monkeypatch):
+    written, recorder = _run_parallel(monkeypatch, 1420.0, 1380.0)
+    assert len(written) == 2
+    assert len(recorder.warnings) == 1
+    assert "40.000s shorter" in recorder.warnings[0]

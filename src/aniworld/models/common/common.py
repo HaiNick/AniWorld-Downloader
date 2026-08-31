@@ -680,13 +680,21 @@ def _rendition_audio_offset(video_path, audio_path):
     video_start = _stream_start_time(video_path, "video")
     audio_start = _stream_start_time(audio_path, "audio")
     if video_start is None or audio_start is None:
+        logger.debug(
+            f"[MUXING] no start time to read (video {video_start}, "
+            f"audio {audio_start}), leaving the timestamps alone"
+        )
         return offset
 
     drift = audio_start - video_start
+    logger.debug(
+        f"[MUXING] video starts at {video_start:.3f}s, audio at {audio_start:.3f}s, "
+        f"so they are {drift:+.3f}s apart"
+    )
     if abs(drift) > MAX_RENDITION_OFFSET:
         logger.debug(
-            f"[MUXING] renditions start {drift:.3f}s apart, so their clocks are "
-            "unrelated and the audio is left where FFmpeg puts it"
+            "[MUXING] that is too far apart to be one clock, so the audio is left "
+            "where FFmpeg puts it"
         )
         return offset
     return offset + drift

@@ -32,6 +32,10 @@ class HLSUnsupported(Exception):
     """The playlist uses a feature this downloader cannot handle."""
 
 
+# Two renditions of one episode differ by less than this. More means they are
+# different cuts, which no amount of timestamp work can line up.
+MAX_RENDITION_GAP = 0.5
+
 DEFAULT_CONCURRENCY = 8
 MAX_CONCURRENCY = 32
 SEGMENT_RETRIES = 3
@@ -306,7 +310,11 @@ def rendition_languages(master_text, base_url=""):
 
 
 def _parse_media_playlist(text, base_url):
-    """Return (segments, init_uri) where each segment is (uri, key, sequence)."""
+    """Return (segments, init_uri, seconds).
+
+    Each segment is (uri, key, sequence); `seconds` is the playlist's own
+    playing time, added up from its EXTINF tags.
+    """
     if "#EXT-X-ENDLIST" not in text:
         raise HLSUnsupported("live playlist (no EXT-X-ENDLIST)")
 
@@ -317,13 +325,20 @@ def _parse_media_playlist(text, base_url):
     init_uri = None
     current_key = None
     sequence = 0
+    seconds = 0.0
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
 
-        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+        if line.startswith("#EXTINF:"):
+            try:
+                seconds += float(line.split(":", 1)[1].split(",", 1)[0])
+            except ValueError:
+                pass
+
+        elif line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
             try:
                 sequence = int(line.split(":", 1)[1])
             except ValueError:
@@ -361,7 +376,7 @@ def _parse_media_playlist(text, base_url):
     if not segments:
         raise HLSUnsupported("playlist contains no segments")
 
-    return segments, init_uri
+    return segments, init_uri, seconds
 
 
 # -----------------------------------------------------------------------------
@@ -455,7 +470,7 @@ class _ProgressTracker:
 def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_factory):
     """Fetch every segment of a media playlist, in order, into one file.
 
-    Returns the path written. The extension reflects the segment container so
+    Returns (path, seconds). The extension reflects the segment container so
     FFmpeg picks the right demuxer: `.mp4` for fMP4 (an EXT-X-MAP init segment
     is present), `.ts` for MPEG-TS.
     """
@@ -463,8 +478,12 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
     if "#EXT-X-STREAM-INF" in text:
         raise HLSUnsupported("expected a media playlist, got a master playlist")
 
-    segments, init_uri = _parse_media_playlist(text, playlist_url)
+    segments, init_uri, seconds = _parse_media_playlist(text, playlist_url)
     output_path = temp_prefix.with_suffix(f"{suffix}{'.mp4' if init_uri else '.ts'}")
+    logger.debug(
+        f"[HLS]{suffix}: {len(segments)} segments, {seconds:.3f}s, "
+        f"{'fmp4' if init_uri else 'ts'}"
+    )
     tracker = tracker_factory(len(segments))
     concurrency = get_concurrency()
 
@@ -500,7 +519,7 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
                 chunk = _fetch_segment(segment)
                 handle.write(chunk)
                 tracker.advance(len(chunk))
-            return output_path
+            return output_path, seconds
 
         # Keep a bounded window of in-flight segments so memory stays flat
         # regardless of how many segments the playlist has.
@@ -521,7 +540,7 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
                     pending.append(pool.submit(_fetch_segment, segments[next_index]))
                     next_index += 1
 
-    return output_path
+    return output_path, seconds
 
 
 def download_hls_parallel(
@@ -576,22 +595,29 @@ def download_hls_parallel(
         def _video_tracker(total):
             return _ProgressTracker(total, label)
 
-        written.append(
-            _download_playlist(
-                video_playlist, headers, temp_prefix, ".hls_video", _video_tracker
-            )
+        video_path, video_seconds = _download_playlist(
+            video_playlist, headers, temp_prefix, ".hls_video", _video_tracker
         )
+        written.append(video_path)
 
         if audio_playlist:
 
             def _audio_tracker(total):
                 return _ProgressTracker(total, f"{label} (audio)" if label else "audio")
 
-            written.append(
-                _download_playlist(
-                    audio_playlist, headers, temp_prefix, ".hls_audio", _audio_tracker
-                )
+            audio_path, audio_seconds = _download_playlist(
+                audio_playlist, headers, temp_prefix, ".hls_audio", _audio_tracker
             )
+            written.append(audio_path)
+
+            gap = audio_seconds - video_seconds
+            if abs(gap) > MAX_RENDITION_GAP:
+                logger.warning(
+                    f"The audio rendition runs {abs(gap):.3f}s "
+                    f"{'longer' if gap > 0 else 'shorter'} than the video "
+                    "(different cuts of the episode), so it cannot line up all "
+                    "the way through. Try another language or provider."
+                )
 
         return written
     except Exception:

@@ -315,6 +315,17 @@ When reporting a bug, please include:
 - The command you ran
 - The relevant log output
 
+### Reporting a download that is out of sync
+
+Audio that sits wrong against the picture needs more than a log line, so there is a tool that collects the rest:
+
+```bash
+python tools/diagnose_sync.py "Season 1/Show S01E03.mkv"
+python tools/diagnose_sync.py https://host.example/master.m3u8
+```
+
+Run it on the finished episode, and on the master playlist the episode came from. To find that playlist, run the download again with `ANIWORLD_DEBUG_MODE=1` and look for the m3u8 in the log. The tool reads start times, playing times and frame rates, and names what it finds: tracks that start apart, an audio rendition that is a different cut of the episode, or a variable frame rate. Attach its output and the debug log to the issue.
+
 Pull requests should stay focused and explain the behavior they change. There is no need to dress it up. A clear description and a reproducible test are worth much more.
 
 There is a test suite, run on every push. It covers everything except the stream providers, which are left out on purpose because they depend on live third-party sites:
