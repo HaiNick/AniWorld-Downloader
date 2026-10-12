@@ -19,13 +19,14 @@ try:
         Subtitles,
         build_provider_attempt_order,
     )
-    from ...extractors import provider_functions
     from ..common import check_downloaded, movie_folder_enabled, run_each
     from ..common.common import clean_title
     from ..common.common import download as episode_download
     from ..common.common import syncplay as episode_syncplay
     from ..common.common import watch as episode_watch
+    from ..common.extraction import resolve_stream_url
     from ..common.http import get_html, get_session
+    from ..common.paths import resolve_download_path
     from ..common.provider_map import host_to_provider
 except ImportError:
     from aniworld.config import (
@@ -33,7 +34,6 @@ except ImportError:
         Subtitles,
         build_provider_attempt_order,
     )
-    from aniworld.extractors import provider_functions
     from aniworld.models.common import (
         check_downloaded,
         movie_folder_enabled,
@@ -43,10 +43,12 @@ except ImportError:
     from aniworld.models.common.common import download as episode_download
     from aniworld.models.common.common import syncplay as episode_syncplay
     from aniworld.models.common.common import watch as episode_watch
+    from aniworld.models.common.extraction import resolve_stream_url
     from aniworld.models.common.http import get_html, get_session
+    from aniworld.models.common.paths import resolve_download_path
     from aniworld.models.common.provider_map import host_to_provider
 
-KINOX_DOMAIN = os.getenv("ANIWORLD_KINOX_DOMAIN", "kinox.to")
+KINOX_DOMAIN = os.getenv("ANIWORLD_KINOX_DOMAIN", "").strip() or "kinox.to"
 
 # Stable marker embedded in the error message when kinox's captcha blocks a
 # download, so the web queue can recognise it and offer a "solve on kinox"
@@ -267,18 +269,16 @@ class KinoxEpisode(_KinoxLanguageMixin):
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            specific_key = (
-                "ANIWORLD_MOVIE_DOWNLOAD_PATH"
-                if self.is_movie
-                else "ANIWORLD_SERIES_DOWNLOAD_PATH"
+            self.__selected_path = str(
+                resolve_download_path(
+                    self.__selected_path_param,
+                    lambda: (
+                        "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+                        if self.is_movie
+                        else "ANIWORLD_SERIES_DOWNLOAD_PATH"
+                    ),
+                )
             )
-            raw = self.__selected_path_param or os.getenv(specific_key) or os.getenv(
-                "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
-            )
-            path = Path(raw).expanduser()
-            if not path.is_absolute():
-                path = Path.home() / path
-            self.__selected_path = str(path)
         return self.__selected_path
 
     @selected_path.setter
@@ -395,14 +395,7 @@ class KinoxEpisode(_KinoxLanguageMixin):
 
     @property
     def stream_url(self):
-        try:
-            return provider_functions[
-                f"get_direct_link_from_{self.selected_provider.lower()}"
-            ](self.provider_url)
-        except KeyError:
-            raise ValueError(
-                f"The provider '{self.selected_provider}' is not yet implemented."
-            )
+        return resolve_stream_url(self)
 
     # ---- filesystem ---------------------------------------------------------
     @property

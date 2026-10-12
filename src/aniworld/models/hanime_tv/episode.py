@@ -18,6 +18,7 @@ from ..common.common import (
 from ..common.common import (
     watch as episode_watch,
 )
+from ..common.paths import resolve_download_path
 
 
 class HanimeTVEpisode:
@@ -200,13 +201,7 @@ class HanimeTVEpisode:
 
     @property
     def selected_path(self):
-        raw_path = self.__selected_path_param or os.getenv(
-            "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
-        )
-        path = Path(raw_path).expanduser()
-        if not path.is_absolute():
-            path = Path.home() / path
-        return str(path)
+        return str(resolve_download_path(self.__selected_path_param))
 
     @selected_path.setter
     def selected_path(self, value):
@@ -237,7 +232,7 @@ class HanimeTVEpisode:
 
     @staticmethod
     def _format_naming_part(
-        template_part, title, year, season_num, episode_num, language
+        template_part, title, year, season_num, episode_num, language, resolution
     ):
         return template_part.format(
             title=title,
@@ -246,6 +241,7 @@ class HanimeTVEpisode:
             season=f"{season_num:02d}",
             episode=f"{episode_num:03d}",
             language=language,
+            resolution=resolution,
         )
 
     def _collides_in_franchise(self):
@@ -308,6 +304,7 @@ class HanimeTVEpisode:
                     self.season.season_number,
                     self.episode_number,
                     self.selected_language,
+                    getattr(self, "_resolution", "unknown"),
                 )
                 # Strip empty imdbid markers from folder name
                 folder_str = re.sub(r"\s*\[imdbid-\]\s*", "", folder_str).strip()
@@ -329,6 +326,7 @@ class HanimeTVEpisode:
                     self.season.season_number,
                     self.episode_number,
                     self.selected_language,
+                    getattr(self, "_resolution", "unknown"),
                 )
                 self.__folder_path = self._base_folder / folder_str
         return self.__folder_path
@@ -351,6 +349,7 @@ class HanimeTVEpisode:
             file_template = file_template.replace("%season%", "{season}")
             file_template = file_template.replace("%episode%", "{episode}")
             file_template = file_template.replace("%language%", "{language}")
+            file_template = file_template.replace("%resolution%", "{resolution}")
 
             self.__file_name = self._format_naming_part(
                 file_template,
@@ -359,6 +358,7 @@ class HanimeTVEpisode:
                 self.season.season_number,
                 self.episode_number,
                 self.selected_language,
+                getattr(self, "_resolution", "unknown"),
             )
         return self.__file_name
 

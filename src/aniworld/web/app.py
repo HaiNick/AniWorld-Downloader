@@ -1,5 +1,6 @@
 """Flask application factory and server entry point."""
 
+import mimetypes
 import os
 from urllib.parse import urlparse
 
@@ -14,6 +15,32 @@ from .views import ADMIN_ENDPOINTS, register_blueprints
 logger = get_logger(__name__)
 
 DEFAULT_PORT = 8080
+
+# Werkzeug types static files from the stdlib mimetypes table, which is seeded
+# from the machine: the registry on Windows, /etc/mime.types elsewhere. Plenty
+# of installs have .js mapped to text/plain there, and paired with the nosniff
+# header below that makes every browser refuse the scripts and the stylesheet.
+# The page then renders as bare HTML with every browse row showing at once and
+# no button doing anything, and nothing about it looks like a MIME problem
+# because the requests all return 200. Pin the types we serve ourselves.
+_STATIC_MIME_TYPES = (
+    (".js", "text/javascript"),
+    (".mjs", "text/javascript"),
+    (".css", "text/css"),
+    (".json", "application/json"),
+    (".svg", "image/svg+xml"),
+    (".webp", "image/webp"),
+    (".woff2", "font/woff2"),
+)
+
+
+def _register_mime_types():
+    """Override whatever the machine thinks these extensions are."""
+    for extension, mime in _STATIC_MIME_TYPES:
+        mimetypes.add_type(mime, extension)
+
+
+_register_mime_types()
 
 # Endpoints that must stay reachable without a session.
 _PUBLIC_ENDPOINTS = {
@@ -54,6 +81,7 @@ def _setup_auth(app, base_url, sso_enabled, force_sso):
         init_oidc,
         refresh_session_role,
     )
+    from .throttle import LoginThrottle
 
     app.secret_key = get_or_create_secret_key()
     app.config.update(
@@ -62,6 +90,8 @@ def _setup_auth(app, base_url, sso_enabled, force_sso):
         SESSION_COOKIE_SECURE=base_url.startswith("https"),
         PERMANENT_SESSION_LIFETIME=86400,
     )
+
+    app.extensions["login_throttle"] = LoginThrottle()
 
     csrf = CSRFProtect()
     app.register_blueprint(auth_bp)
@@ -218,6 +248,24 @@ def _wire_captcha_hooks():
     captcha._on_captcha_end = db.clear_captcha_url
 
 
+def _proxy_options():
+    """Let waitress take the client IP from a reverse proxy we trust.
+
+    Only connections coming from ANIWORLD_WEB_TRUSTED_PROXY may set
+    X-Forwarded-For, the header is stripped from everyone else so a client
+    cannot fake its address (the login throttle counts per IP).
+    """
+    trusted_proxy = os.getenv("ANIWORLD_WEB_TRUSTED_PROXY", "").strip()
+    if not trusted_proxy:
+        return {}
+    return {
+        "trusted_proxy": trusted_proxy,
+        "trusted_proxy_count": 1,
+        "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"},
+        "clear_untrusted_proxy_headers": True,
+    }
+
+
 def start_web_ui(
     host="127.0.0.1",
     port=DEFAULT_PORT,
@@ -255,4 +303,4 @@ def start_web_ui(
     else:
         from waitress import serve
 
-        serve(app, host=host, port=port)
+        serve(app, host=host, port=port, **_proxy_options())

@@ -13,7 +13,7 @@ from flask import (
 )
 
 from ...config import ANIWORLD_CONFIG_DIR, LANG_LABELS
-from .. import paths, settings_store, theming
+from .. import paths, settings_store, sitesearch, theming
 from ..media import WORKING_PROVIDERS
 
 bp = Blueprint("pages", __name__)
@@ -67,9 +67,10 @@ def index():
         megakino_lang_labels=MEGAKINO_LANGUAGES,
         supported_providers=WORKING_PROVIDERS,
         default_language=settings_store.default_language(),
-        htv_enabled=settings_store.htv_enabled(),
-        burningseries_enabled=settings_store.burningseries_enabled(),
-        kinox_enabled=settings_store.kinox_enabled(),
+        show_all_languages=settings_store.show_all_languages(),
+        english_sub_disabled=settings_store.english_sub_disabled(),
+        sites=settings_store.enabled_sites(),
+        genre_sites=sitesearch.GENRE_SITES,
     )
 
 

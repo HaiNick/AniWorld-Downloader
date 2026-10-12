@@ -17,7 +17,6 @@ try:
         build_provider_attempt_order,
         logger,
     )
-    from ...extractors import provider_functions
     from ..common import ProviderData, clean_title
     from ..common.common import check_downloaded, movie_folder_enabled
     from ..common.common import (
@@ -29,6 +28,10 @@ try:
     from ..common.common import (
         watch as episode_watch,
     )
+    from ..common.extraction import resolve_stream_url
+    from ..common.naming import template_path
+    from ..common.paths import resolve_download_path
+    from ..common.provider_map import host_to_provider
 except ImportError:
     from aniworld.config import (
         GLOBAL_SESSION,
@@ -39,7 +42,6 @@ except ImportError:
         build_provider_attempt_order,
         logger,
     )
-    from aniworld.extractors import provider_functions
     from aniworld.models.common import (
         ProviderData,
         check_downloaded,
@@ -55,6 +57,10 @@ except ImportError:
     from aniworld.models.common import (
         watch as episode_watch,
     )
+    from aniworld.models.common.extraction import resolve_stream_url
+    from aniworld.models.common.naming import template_path
+    from aniworld.models.common.paths import resolve_download_path
+    from aniworld.models.common.provider_map import host_to_provider
 
 MEGAKINO_DOMAIN_SOURCE = "https://raw.githubusercontent.com/Yezun-hikari/new-domain-check/refs/heads/main/monitors/megakino/domain.txt"
 
@@ -175,18 +181,6 @@ class MegaKinoEpisode:
         if not match:
             return url, None
         return url[: match.start()], int(match.group(1))
-
-    @staticmethod
-    def __provider_name_from_url(url):
-        """Map a hoster embed URL to the internal provider name."""
-        host = (urlparse(url).netloc or "").strip().lower()
-        if not host:
-            return None
-        if host.endswith("voe.sx"):
-            return "VOE"
-        if host.endswith("gxplayer.xyz"):
-            return "MegaKino"
-        return host.split(".", 1)[0].upper()
 
     # -----------------------------
     # public properties
@@ -790,13 +784,8 @@ class MegaKinoEpisode:
             re.DOTALL,
         ):
             url = option.group(1).strip()
-            provider_name = self.__provider_name_from_url(url)
+            provider_name = host_to_provider(urlparse(url).hostname)
             if not provider_name:
-                continue
-            if (
-                f"get_direct_link_from_{provider_name.lower()}"
-                not in provider_functions
-            ):
                 continue
             providers.setdefault(provider_name, url)
         return providers
@@ -823,13 +812,8 @@ class MegaKinoEpisode:
         providers = {}
         for source in self.player_sources:
             url = (source.get("url") or "").strip()
-            provider_name = self.__provider_name_from_url(url)
+            provider_name = host_to_provider(urlparse(url).hostname)
             if not provider_name:
-                continue
-            if (
-                f"get_direct_link_from_{provider_name.lower()}"
-                not in provider_functions
-            ):
                 continue
 
             providers[provider_name] = url
@@ -930,23 +914,16 @@ class MegaKinoEpisode:
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            specific_key = (
-                "ANIWORLD_SERIES_DOWNLOAD_PATH"
-                if self.is_series
-                else "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+            self.__selected_path = str(
+                resolve_download_path(
+                    self.__selected_path_param,
+                    lambda: (
+                        "ANIWORLD_SERIES_DOWNLOAD_PATH"
+                        if self.is_series
+                        else "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+                    ),
+                )
             )
-            raw_path = self.__selected_path_param or os.getenv(
-                specific_key
-            ) or os.getenv(
-                "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
-            )
-
-            path = Path(raw_path).expanduser()
-
-            if not path.is_absolute():
-                path = Path.home() / path
-
-            self.__selected_path = str(path)
         return self.__selected_path
 
     @selected_path.setter
@@ -1068,19 +1045,10 @@ class MegaKinoEpisode:
 
     @property
     def stream_url(self):
-        try:
-            stream_url = provider_functions[
-                f"get_direct_link_from_{self.selected_provider.lower()}"
-            ](self.provider_url)
-        except KeyError:
-            raise ValueError(
-                f"The provider '{self.selected_provider}' is not yet implemented."
-            )
-
-        return stream_url
+        return resolve_stream_url(self)
 
     @property
-    def _base_folder(self):
+    def _legacy_base_folder(self):
         if self.__base_folder is None:
             if self.is_series:
                 # Keep a serial's episodes together in a title folder; the year
@@ -1097,45 +1065,60 @@ class MegaKinoEpisode:
         return self.__base_folder
 
     @property
+    def _base_folder(self):
+        root = Path(self.selected_path)
+        relative = self._episode_path.relative_to(root)
+        return root / relative.parts[0] if len(relative.parts) > 1 else root
+
+    @property
     def _folder_path(self):
-        if self.__folder_path is None:
-            self.__folder_path = self._base_folder
-        return self.__folder_path
+        return self._episode_path.parent
 
     @property
     def _file_name(self):
-        if self.__file_name is None:
-            if self.is_series:
-                episode_number = self.__episode_index or 1
-                self.__file_name = f"{self.title_cleaned} - E{episode_number:02d}"
-            else:
-                self.__file_name = f"{self.title_cleaned} ({self.release_year})"
-        return self.__file_name
+        return self._episode_path.stem
 
     @property
     def _file_extension(self):
-        if self.__file_extension is None:
-            naming_template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
-            try:
-                file_part = naming_template.split("/")[-1]
-                if "." in file_part:
-                    ext = file_part.rsplit(".", 1)[-1]
-                    self.__file_extension = ext if ext else "mkv"
-                else:
-                    self.__file_extension = "mkv"
-            except IndexError:
-                self.__file_extension = "mkv"
-        return self.__file_extension
+        return self._episode_path.suffix.lstrip(".")
 
     @property
     def _episode_path(self):
         if self.__episode_path is None:
+            template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
+            path = template_path(
+                self.selected_path,
+                template,
+                {
+                    "title": self.title_cleaned,
+                    "year": self.release_year,
+                    "imdbid": "",
+                    "season": "01" if self.is_series else "",
+                    "episode": f"{(self.__episode_index or 1):03d}"
+                    if self.is_series
+                    else "",
+                    "language": self.selected_language,
+                    "resolution": getattr(self, "_resolution", "unknown"),
+                },
+                is_series=self.is_series,
+                movie_folder=movie_folder_enabled(),
+            )
+            extension = path.suffix.lstrip(".")
+            if self.is_series:
+                legacy = (
+                    self._legacy_base_folder
+                    / f"{self.title_cleaned} - E{self.__episode_index or 1:02d}.{extension}"
+                )
+            else:
+                legacy = (
+                    self._legacy_base_folder
+                    / f"{self.title_cleaned} ({self.release_year}).{extension}"
+                )
+            # Keep old downloads in place; new downloads use the full template.
             self.__episode_path = (
-                self._folder_path / f"{self._file_name}.{self._file_extension}"
+                path if path.exists() or not legacy.exists() else legacy
             )
         return self.__episode_path
-
-    # END
 
     @property
     def is_downloaded(self):

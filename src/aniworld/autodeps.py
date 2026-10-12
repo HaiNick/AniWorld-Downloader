@@ -313,7 +313,11 @@ class DependencyManager:
             self.logger.debug(f"{name} found in {self.install_folder}")
             return local_binary
 
-        url = self._resolve_download_url(name, dep_info)
+        url = (
+            dep_info.get("url")
+            if auto_install_disabled()
+            else self._resolve_download_url(name, dep_info)
+        )
 
         local_path = self.install_folder / Path(url).name if url else None
 
@@ -322,6 +326,13 @@ class DependencyManager:
         if local_binary:
             self.logger.debug(f"{name} found in {self.install_folder}")
             return local_binary
+
+        if auto_install_disabled():
+            raise FileNotFoundError(
+                f"{name} was not found locally and automatic installation is disabled "
+                "(ANIWORLD_NO_AUTO_INSTALL=1). Install it manually and add it to PATH "
+                f"or {self.install_folder}."
+            )
 
         if not prompt_user:
             if url:
@@ -409,9 +420,10 @@ class DependencyManager:
 # -----------------------------
 # Player paths
 # -----------------------------
-def get_player_path() -> Path:
+def get_player_path(*, use_iina=None) -> Path:
     manager = DependencyManager()
-    use_iina = os.getenv("ANIWORLD_USE_IINA") == "1"
+    if use_iina is None:
+        use_iina = os.getenv("ANIWORLD_USE_IINA") == "1"
     # TODO: check if aniskip is selected in future for IINA to fallback to mpv for functionality if issue #200 is fixed
 
     if PLATFORM == "Darwin" and use_iina:
@@ -485,7 +497,7 @@ def ensure_patchright_chromium():
     """Install the patchright Chromium browser if not already present."""
     _log = get_logger(__name__)
     if auto_install_disabled():
-        _log.debug("ANIWORLD_NO_AUTO_INSTALL=1 — skipping chromium/Xvfb setup")
+        _log.debug("ANIWORLD_NO_AUTO_INSTALL=1 — skipping chromium setup")
         return
 
     try:
@@ -494,9 +506,9 @@ def ensure_patchright_chromium():
         _log.debug("patchright not installed, skipping chromium check")
         return
 
-    _ensure_xvfb()
     try:
         from patchright._impl._driver import compute_driver_executable, get_driver_env
+        from patchright.sync_api import sync_playwright
 
         browsers_path = Path(
             os.environ.setdefault(
@@ -519,6 +531,10 @@ def ensure_patchright_chromium():
 
         if PLATFORM != "Windows" and not os.access(driver_path, os.X_OK):
             driver_path.chmod(driver_path.stat().st_mode | 0o111)
+
+        with sync_playwright() as runtime:
+            if Path(runtime.chromium.executable_path).is_file():
+                return
 
         _log.debug("Installing patchright chromium (this may take a moment)...")
         subprocess.run(

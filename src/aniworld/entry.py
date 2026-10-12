@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 from .arguments import parse_args
-from .autodeps import ensure_patchright_chromium
 from .config import ACTION_METHODS, ANIWORLD_CONFIG_DIR, VERSION
 from .env import merge_env
 from .logger import get_logger
@@ -46,6 +45,39 @@ def validate_action(action: str):
 def run_action(obj, action: str):
     validate_action(action)
     getattr(obj, action)()
+    if (
+        action not in {"watch", "syncplay"}
+        or os.getenv("ANIWORLD_KEEP_WATCHING") != "1"
+    ):
+        return
+    season = getattr(obj, "season", None)
+    if season is None:
+        return
+    episodes = list(season.episodes)
+    for index, episode in enumerate(episodes):
+        if episode.url != obj.url:
+            continue
+        following = episodes[index + 1 :]
+        for next_episode in following:
+            for setting in ("selected_path", "selected_language", "selected_provider"):
+                setattr(next_episode, setting, getattr(obj, setting))
+        failures = run_each(following, action)
+        if failures:
+            raise RuntimeError(f"{len(failures)} following episode(s) failed")
+        break
+
+
+def model_for_url(url):
+    provider = resolve_provider(url)
+    # A video URL is one episode even when a site's franchise pattern overlaps.
+    for pattern, model in (
+        (provider.episode_pattern, provider.episode_cls),
+        (provider.season_pattern, provider.season_cls),
+        (provider.series_pattern, provider.series_cls),
+    ):
+        if pattern and pattern.fullmatch(url):
+            return model(url=url)
+    raise ValueError(f"Invalid URL for provider: {url}")
 
 
 def aniworld():
@@ -55,11 +87,6 @@ def aniworld():
         logger.debug("Starting AniWorld-Downloader...")
         set_terminal_title()
         args = parse_args()
-
-        if os.getenv("ANIWORLD_DOWNLOAD_PATH") != "/app/Downloads":
-            logger.debug("Checking dependencies...")
-            ensure_patchright_chromium()
-            logger.debug("Dependencies OK")
 
         if args.web_ui:
             from .web import start_web_ui
@@ -113,22 +140,7 @@ def aniworld():
                 raise ValueError("No URLs provided while using --no-menu")
 
             for url in urls:
-                provider = resolve_provider(url)
-
-                if provider.series_pattern and provider.series_pattern.fullmatch(url):
-                    obj = provider.series_cls(url=url)
-
-                elif provider.season_pattern and provider.season_pattern.fullmatch(url):
-                    obj = provider.season_cls(url=url)
-
-                elif provider.episode_pattern and provider.episode_pattern.fullmatch(
-                    url
-                ):
-                    obj = provider.episode_cls(url=url)
-
-                else:
-                    raise ValueError(f"Invalid URL for provider: {url}")
-
+                obj = model_for_url(url)
                 run_action(obj, action)
 
             return 0
@@ -137,15 +149,7 @@ def aniworld():
         # If multiple URLs are provided (e.g., via --episode-file), process them directly
         if args.episode_file and args.url:
             for url in args.url:
-                provider = resolve_provider(url)
-                if provider.episode_pattern.fullmatch(url):
-                    obj = provider.episode_cls(url=url)
-                elif provider.season_pattern and provider.season_pattern.fullmatch(url):
-                    obj = provider.season_cls(url=url)
-                elif provider.series_pattern and provider.series_pattern.fullmatch(url):
-                    obj = provider.series_cls(url=url)
-                else:
-                    raise ValueError(f"Invalid URL for provider: {url}")
+                obj = model_for_url(url)
                 run_action(obj, action)
             return 0
 
@@ -160,18 +164,7 @@ def aniworld():
 
         # If provider is NOT AniWorld -> bypass menu
         if provider.name != "AniWorld" and provider.name != "SerienStream":
-            if provider.series_pattern and provider.series_pattern.fullmatch(url):
-                obj = provider.series_cls(url=url)
-
-            elif provider.season_pattern and provider.season_pattern.fullmatch(url):
-                obj = provider.season_cls(url=url)
-
-            elif provider.episode_pattern and provider.episode_pattern.fullmatch(url):
-                obj = provider.episode_cls(url=url)
-
-            else:
-                raise ValueError(f"Invalid URL for provider: {url}")
-
+            obj = model_for_url(url)
             run_action(obj, action)
             return 0
 

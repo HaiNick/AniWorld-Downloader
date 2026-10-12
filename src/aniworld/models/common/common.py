@@ -1,5 +1,6 @@
 import functools
 import getpass
+import glob
 import hashlib
 import os
 import platform
@@ -23,6 +24,7 @@ try:
         INVERSE_LANG_LABELS,
         LANG_CODE_MAP,
         LANG_KEY_MAP,
+        NAMING_TEMPLATE,
         PROVIDER_HEADERS_D,
         PROVIDER_HEADERS_W,
         Audio,
@@ -37,6 +39,7 @@ except ImportError:
         INVERSE_LANG_LABELS,
         LANG_CODE_MAP,
         LANG_KEY_MAP,
+        NAMING_TEMPLATE,
         PROVIDER_HEADERS_D,
         PROVIDER_HEADERS_W,
         Audio,
@@ -49,10 +52,106 @@ except ImportError:
 # Precompile regex for forbidden filename characters
 FORBIDDEN_CHARS = re.compile(r'[<>:"/\\|?*]')
 
+# Providers that already exhaust their own mirrors in one extractor call.
+SINGLE_ATTEMPT_PROVIDERS = frozenset({"MoflixClick"})
+
 
 def clean_title(title: str) -> str:
     """Clean a string to make it safe for use as a filename."""
     return FORBIDDEN_CHARS.sub("", title).strip()
+
+
+def _naming_template_uses_resolution():
+    template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
+    return "{resolution}" in template or "%resolution%" in template
+
+
+def _read_container_resolution(path):
+    """Read one local video stream's height from FFmpeg's container output."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "unknown"
+    streams = re.findall(
+        r"^\s*Stream #.*Video:.*?\b\d{2,5}x(\d{2,5})\b",
+        result.stderr or "",
+        re.MULTILINE,
+    )
+    return f"{streams[0]}p" if len(streams) == 1 else "unknown"
+
+
+def _reset_naming_cache(self):
+    suffixes = (
+        "__base_folder",
+        "__folder_path",
+        "__file_name",
+        "__episode_path",
+        "__is_downloaded",
+    )
+    for name in vars(self):
+        if name.endswith(suffixes):
+            setattr(self, name, None)
+
+
+def _set_naming_resolution(self, resolution):
+    self._resolution = resolution
+    _reset_naming_cache(self)
+
+
+def _prepare_resolution_naming(self):
+    """Start with unknown, or reuse a matching previously downloaded file."""
+    if not _naming_template_uses_resolution():
+        return
+    _set_naming_resolution(self, "unknown")
+    if self._episode_path.exists():
+        return
+
+    marker = "__ANIWORLD_RESOLUTION__"
+    _set_naming_resolution(self, marker)
+    pattern = glob.escape(str(self._episode_path)).replace(marker, "*")
+    candidates = [Path(path) for path in glob.glob(pattern)]
+    for candidate in candidates:
+        resolution = _read_container_resolution(candidate)
+        _set_naming_resolution(self, resolution)
+        if self._episode_path == candidate:
+            return
+    _set_naming_resolution(self, "unknown")
+
+
+def _finalize_resolution_naming(self):
+    """Rename a finished local container using its unambiguous resolution."""
+    if not _naming_template_uses_resolution():
+        return
+    old_path = self._episode_path
+    _set_naming_resolution(self, _read_container_resolution(old_path))
+    new_path = self._episode_path
+    if new_path != old_path:
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(old_path, new_path)
+
+
+def _progress_file_name(self):
+    """Hide post-processed resolution metadata from the live progress label."""
+    name = self._file_name or ""
+    resolution = str(getattr(self, "_resolution", "") or "")
+    if not _naming_template_uses_resolution() or not resolution:
+        return name
+    index = name.rfind(resolution)
+    if index < 0:
+        return name
+    start, end = index, index + len(resolution)
+    separators = "._- "
+    if start and name[start - 1] in separators:
+        start -= 1
+    elif end < len(name) and name[end] in separators:
+        end += 1
+    return name[:start] + name[end:]
 
 
 def _quote_windows_cmd_arg(arg) -> str:
@@ -705,7 +804,7 @@ def movie_folder_enabled():
     return os.getenv("ANIWORLD_MOVIE_FOLDER", "1") != "0"
 
 
-def _finalize_episode(temp_path, episode_path, label=""):
+def _finalize_episode(temp_path, episode_path, label="", owner=None):
     """Move `temp_path` onto `episode_path`, remuxing when containers differ.
 
     The muxer always writes Matroska, so a naming template ending in `.mp4`
@@ -718,6 +817,8 @@ def _finalize_episode(temp_path, episode_path, label=""):
 
     if target_ext == source_ext or target_ext not in ("mkv", "mp4"):
         os.replace(temp_path, episode_path)
+        if owner is not None:
+            _finalize_resolution_naming(owner)
         return
 
     converted = episode_path.with_suffix(f".convert.{target_ext}")
@@ -753,12 +854,14 @@ def _finalize_episode(temp_path, episode_path, label=""):
 
     os.replace(converted, episode_path)
     temp_path.unlink(missing_ok=True)
+    if owner is not None:
+        _finalize_resolution_naming(owner)
 
 
 def _download_direct_http(episode_path, stream_url, file_name):
     """Download a video via direct HTTP (e.g. pixeldrain). Shared helper."""
     temp_file = episode_path.with_suffix(".temp_dl.mp4")
-    ep_label = os.path.splitext(file_name)[0] if file_name else ""
+    ep_label = file_name or ""
 
     try:
         logger.debug(f"[DOWNLOADING] {ep_label} via direct download")
@@ -833,20 +936,22 @@ def _download_direct_http(episode_path, stream_url, file_name):
             )
 
 
-def _download_hls_stream(episode_path, stream_url, file_name, audio_lang="jpn"):
+def _download_hls_stream(
+    episode_path, stream_url, file_name, audio_lang="jpn", owner=None
+):
     """Download a Hanime HLS stream with per-segment retries."""
-    ep_label = os.path.splitext(file_name)[0] if file_name else ""
+    ep_label = file_name or ""
     temp_full = episode_path.with_suffix(".temp_full.mkv")
     temp_prefix = episode_path.with_suffix(".hanime_hls")
 
     try:
         logger.debug(f"[DOWNLOADING] {ep_label} via HLS stream")
         video_codec = get_video_codec()
-        from ...config import DEFAULT_USER_AGENT
+        from ...config import DEFAULT_USER_AGENT, GLOBAL_SESSION
         from .hls import HLSUnsupported, cleanup_temp_files, download_hls_parallel
 
         headers = {
-            "User-Agent": DEFAULT_USER_AGENT,
+            "User-Agent": GLOBAL_SESSION.headers.get("User-Agent", DEFAULT_USER_AGENT),
             "Referer": "https://hanime.tv/",
             "Origin": "https://hanime.tv",
         }
@@ -892,6 +997,9 @@ def _download_hls_stream(episode_path, stream_url, file_name, audio_lang="jpn"):
                     "reconnect_streamed": 1,
                     "reconnect_delay_max": 30,
                     "allowed_extensions": "ALL",
+                    "headers": "".join(
+                        f"{key}: {value}\r\n" for key, value in headers.items()
+                    ),
                 },
                 headers,
                 {"metadata:s:a:0": f"language={audio_lang}"},
@@ -900,7 +1008,7 @@ def _download_hls_stream(episode_path, stream_url, file_name, audio_lang="jpn"):
                 audio_lang,
             )
 
-        _finalize_episode(temp_full, episode_path, ep_label)
+        _finalize_episode(temp_full, episode_path, ep_label, owner=owner)
     except Exception:
         if temp_full.exists():
             temp_full.unlink()
@@ -918,19 +1026,27 @@ def download_hanime(self):
         manager = DependencyManager()
         manager.fetch_binary("ffmpeg")
 
+    _prepare_resolution_naming(self)
+
     if self._episode_path.exists():
         logger.debug(f"[SKIPPED] {self._file_name} (already downloaded)")
         return
 
     os.makedirs(self._folder_path, exist_ok=True)
+    try:
+        stream_url = self.stream_url
+    except Exception as exc:
+        raise RuntimeError(f"Hanime download failed: {exc}") from exc
+
     last_error = None
     for attempt in range(1, 4):
         try:
-            if attempt == 1:
-                stream_url = self.stream_url
-            else:
-                stream_url = self.refresh_stream_url()
-            _download_hls_stream(self._episode_path, stream_url, self._file_name)
+            _download_hls_stream(
+                self._episode_path,
+                stream_url,
+                _progress_file_name(self),
+                owner=self,
+            )
             return
         except Exception as exc:
             last_error = exc
@@ -939,6 +1055,12 @@ def download_hanime(self):
                     f"Hanime download attempt {attempt}/3 failed: {exc}; retrying with a fresh stream"
                 )
                 time.sleep(attempt)
+                try:
+                    stream_url = self.refresh_stream_url()
+                except Exception as refresh_exc:
+                    raise RuntimeError(
+                        f"Hanime download failed: {refresh_exc}"
+                    ) from refresh_exc
 
     raise RuntimeError(
         f"Hanime download failed after 3 attempts: {last_error}"
@@ -955,7 +1077,7 @@ _HLS_MEDIA_EXTS = (".ts", ".m4s", ".mp4", ".m4a", ".m4v", ".aac", ".mp3", ".mov"
 def _fetch_hls_segment(session, seg_url, headers, hosts, timeout=90):
     """Download one HLS segment, failing over across mirror hosts.
 
-    cineby serves every segment from a rotating pool of mirror hosts that all
+    Some hosters serve segments from a rotating pool of mirror hosts that all
     return byte-identical content, so a single host's transient failure (e.g. a
     Cloudflare 522 origin timeout) no longer has to abort the whole download — we
     retry the same path on the other mirrors (two passes, short backoff) before
@@ -1004,7 +1126,7 @@ def _hls_uris(playlist, base_url):
 def _download_hls_manual(m3u8_url, headers, temp_ts, label=""):
     """Fetch an HLS media playlist's segments over plain HTTP into `temp_ts`.
 
-    Some hosters (cineby) disguise their segments with non-media extensions
+    Some hosters disguise their segments with non-media extensions
     (`.jpg`, `.css`, `.txt`) served from rotating hosts. Strict FFmpeg builds
     refuse those through the HLS demuxer even with `-allowed_extensions ALL`, so
     we bypass the demuxer entirely: download each segment ourselves (they are
@@ -1036,6 +1158,10 @@ def _download_hls_manual(m3u8_url, headers, temp_ts, label=""):
 
     if "#EXT-X-KEY" in playlist:
         raise _HLSManualUnsupported("encrypted playlist")
+    # fMP4 segments are unreadable without their init segment, which plain
+    # concatenation would leave out
+    if "#EXT-X-MAP" in playlist:
+        raise _HLSManualUnsupported("fMP4 playlist with an init segment")
 
     from .hls import playlist_has_discontinuity
 
@@ -1097,7 +1223,7 @@ def _download_hls_manual(m3u8_url, headers, temp_ts, label=""):
 def _hls_rendition_download(stream_url, temp_prefix, headers, audio_code, ep_label):
     """Fetch an HLS stream, selecting the ``audio_code`` audio rendition.
 
-    Used when the wanted audio (e.g. a German dub on cineby) is a *separate*
+    Used when the wanted audio is a *separate*
     ``#EXT-X-MEDIA:TYPE=AUDIO`` rendition inside a multi-audio master rather than
     the muxed default — the plain FFmpeg/manual paths would grab the default
     track instead. Returns ``(video_path, audio_path)`` (``audio_path`` is None
@@ -1181,23 +1307,29 @@ def download(self):
     max_retries = 3
     provider_order = _get_provider_attempt_order(self)
     provider_errors = {}
+    _prepare_resolution_naming(self)
 
     for provider_index, provider_name in enumerate(provider_order):
         _set_selected_provider(self, provider_name)
 
-        for attempt in range(1, max_retries + 1):
+        # MoflixClick's extractor already checks each advertised HLS mirror.
+        # Repeating a failed full download three times can leave its queue item
+        # at 0% for minutes before trying another provider or reporting failure.
+        provider_retries = (
+            1 if provider_name in SINGLE_ATTEMPT_PROVIDERS else max_retries
+        )
+        for attempt in range(1, provider_retries + 1):
             try:
                 _reset_provider_resolution_cache(self)
                 stream_url = self.stream_url
-                check = check_downloaded(self._episode_path)
-
                 headers = PROVIDER_HEADERS_D.get(provider_name, {})
+                check = check_downloaded(self._episode_path)
                 input_kwargs = {
                     "reconnect": 1,
                     "reconnect_streamed": 1,
                     "reconnect_delay_max": 30,  # wait up to 30s for connection recovery
                 }
-                # Cineby (and some other hosters) disguise their HLS segments with
+                # Some hosters disguise their HLS segments with
                 # non-.ts extensions like .jpg; ffmpeg 7+ refuses those by default
                 # ("not in allowed_segment_extensions"), so allow every segment
                 # extension for m3u8 inputs.
@@ -1250,13 +1382,11 @@ def download(self):
 
                 os.makedirs(self._folder_path, exist_ok=True)
 
-                ep_label = (
-                    os.path.splitext(self._file_name)[0] if self._file_name else ""
-                )
+                ep_label = _progress_file_name(self)
 
                 full_stream_needed = need_audio and need_video
 
-                # Some providers (cineby's German dub) serve the wanted audio as
+                # Some providers serve the wanted audio as
                 # a separate HLS rendition rather than the muxed default; the
                 # episode opts into rendition-aware fetching so we pick the right
                 # track instead of the default one.
@@ -1334,9 +1464,13 @@ def download(self):
                         _run_ffmpeg_with_progress(
                             ffmpeg.output(*inputs, str(output_path), c="copy")
                         )
-                        _finalize_episode(output_path, self._episode_path, ep_label)
+                        _finalize_episode(
+                            output_path, self._episode_path, ep_label, owner=self
+                        )
                     else:
-                        _finalize_episode(temp_full, self._episode_path, ep_label)
+                        _finalize_episode(
+                            temp_full, self._episode_path, ep_label, owner=self
+                        )
 
                     if temp_full.exists():
                         temp_full.unlink()
@@ -1415,7 +1549,7 @@ def download(self):
                 _run_ffmpeg_with_progress(
                     ffmpeg.output(*inputs, str(output_path), c="copy")
                 )
-                _finalize_episode(output_path, self._episode_path, ep_label)
+                _finalize_episode(output_path, self._episode_path, ep_label, owner=self)
 
                 for f in (temp_audio, temp_video):
                     if f.exists():
@@ -1436,8 +1570,6 @@ def download(self):
                 # The user stopped this, so clean up and get out instead of
                 # logging a failure and trying the next provider.
                 _cleanup_episode_download(self)
-                if self._episode_path.exists():
-                    self._episode_path.unlink()
                 _remove_empty_dirs(
                     self._folder_path,
                     self._base_folder,
@@ -1454,8 +1586,6 @@ def download(self):
 
                     qid = getattr(_local, "queue_id", None)
                     if qid is not None and is_queue_force_cancelled(qid):
-                        if self._episode_path.exists():
-                            self._episode_path.unlink()
                         _remove_empty_dirs(
                             self._folder_path,
                             self._base_folder,
@@ -1468,10 +1598,10 @@ def download(self):
 
                 provider_errors[provider_name] = e
                 logger.warning(
-                    f"Download attempt {attempt}/{max_retries} failed for provider "
+                    f"Download attempt {attempt}/{provider_retries} failed for provider "
                     f"{provider_name}: {e}"
                 )
-                if attempt < max_retries:
+                if attempt < provider_retries:
                     logger.debug(f"Retrying download with provider {provider_name}...")
                     continue
 
@@ -1583,10 +1713,6 @@ def syncplay(self):
 
     print(f"[Syncplaying] {self._file_name}")
 
-    # TODO: implement IINA support for syncplay (Syncplay may not detect IINA binary reliably)
-    # Force mpv for now (get_player_path() reads this env var)
-    os.environ["ANIWORLD_USE_IINA"] = "0"
-
     stream_url, provider_name = _resolve_stream_url_with_fallback(self, "Syncplay")
 
     syncplay_host = os.getenv("ANIWORLD_SYNCPLAY_HOST") or "syncplay.pl:8998"
@@ -1605,8 +1731,6 @@ def syncplay(self):
     file_name = self._file_name.replace(" ", "_")
 
     if syncplay_password:
-        # Log what we're using to derive the room (helps debugging)
-        logger.debug(f"{room}-{file_name}-{syncplay_password}")
         room += (
             "-"
             + hashlib.sha256(f"-{file_name}-{syncplay_password}".encode()).hexdigest()
@@ -1630,7 +1754,7 @@ def syncplay(self):
         "--name",
         syncplay_username,
         "--player-path",
-        str(get_player_path()),
+        str(get_player_path(use_iina=False)),
         stream_url,
         # "/Users/phoenixthrush/Downloads/Caramelldansen.webm",
     ]
