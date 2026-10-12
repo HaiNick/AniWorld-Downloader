@@ -25,6 +25,7 @@ try:
     from ..common.common import (
         watch as episode_watch,
     )
+    from ..common.paths import resolve_download_path
     from ..common.provider_map import host_to_provider
 except ImportError:
     from aniworld.config import (
@@ -51,12 +52,14 @@ except ImportError:
     from aniworld.models.common import (
         watch as episode_watch,
     )
+    from aniworld.models.common.paths import resolve_download_path
     from aniworld.models.common.provider_map import host_to_provider
 
 FILMO_BASE = "https://filmo.to"
 
 FILMO_EPISODE_PATTERN = re.compile(
-    r"^https?://(?:www\.)?filmo\.to/movies/[^/?#]+/?$", re.IGNORECASE
+    r"^https?://(?:www\.)?filmo\.to/movies/[\w-]+/?(?:\?[^#]*)?(?:#.*)?$",
+    re.IGNORECASE,
 )
 
 # Language rows are labelled with a flag class plus a localised caption. The
@@ -266,18 +269,11 @@ class FilmoEpisode:
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            raw_path = self.__selected_path_param or os.getenv(
-                "ANIWORLD_MOVIE_DOWNLOAD_PATH"
-            ) or os.getenv(
-                "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
+            self.__selected_path = str(
+                resolve_download_path(
+                    self.__selected_path_param, "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+                )
             )
-
-            path = Path(raw_path).expanduser()
-
-            if not path.is_absolute():
-                path = Path.home() / path
-
-            self.__selected_path = str(path)
         return self.__selected_path
 
     @selected_path.setter
@@ -327,6 +323,10 @@ class FilmoEpisode:
     @property
     def title(self):
         return self.title_de or ""
+
+    @property
+    def title_en(self):
+        return self.title
 
     @property
     def title_cleaned(self):
@@ -474,7 +474,7 @@ class FilmoEpisode:
             self.__meta_labels = [
                 self.__strip_tags(span)
                 for span in re.findall(
-                    r'<span[^>]*ft-meta-label[^>]*>(.*?)</span>', self._html, re.DOTALL
+                    r"<span[^>]*ft-meta-label[^>]*>(.*?)</span>", self._html, re.DOTALL
                 )
             ]
         return self.__meta_labels
@@ -494,9 +494,7 @@ class FilmoEpisode:
     @property
     def _csrf_token(self):
         if self.__csrf_token is None:
-            match = re.search(
-                r'<meta name="csrf-token" content="([^"]+)"', self._html
-            )
+            match = re.search(r'<meta name="csrf-token" content="([^"]+)"', self._html)
             if not match:
                 raise ValueError(f"No CSRF token found on Filmo page: {self.url}")
             self.__csrf_token = match.group(1)
@@ -558,9 +556,7 @@ class FilmoEpisode:
         if match:
             self.__description = self.__strip_tags(match.group(1))
             return
-        match = re.search(
-            r'<meta name="description" content="([^"]*)"', self._html
-        )
+        match = re.search(r'<meta name="description" content="([^"]*)"', self._html)
         if match:
             self.__description = html_module.unescape(match.group(1)).strip()
 
@@ -614,7 +610,9 @@ class FilmoEpisode:
         # "12+", "Ab 12", "FSK 16", "R"
         for label in self._meta_labels:
             text = label.strip()
-            if re.fullmatch(r"(?:\d{1,2}\+|(?:Ab|FSK)\s*\d{1,2}|[A-Z]{1,5}-?\d*)", text):
+            if re.fullmatch(
+                r"(?:\d{1,2}\+|(?:Ab|FSK)\s*\d{1,2}|[A-Z]{1,5}-?\d*)", text
+            ):
                 self.__age_rating = text
                 return
 

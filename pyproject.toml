@@ -1,14 +1,14 @@
 [project]
 name = "aniworld"
-version = "5.0.1"
+version = "5.3.0"
 authors = [{ name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" }]
 maintainers = [
   { name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" },
-  { name = "Sirox", email = "iloveshell@proton.me"}
+  { name = "Sirox", email = "iloveshell@proton.me" },
 ]
 description = "AniWorld-Downloader is a command-line tool for downloading and streaming movies and series."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # requires version numbers from 06/2026
 dependencies = [
   "certifi",                                                                  # CA bundle for bundled runtimes
@@ -16,7 +16,6 @@ dependencies = [
   "npyscreen",                                                                # >=3.7
   "ffmpeg-python",                                                            # ???
   "python-dotenv",                                                            # >=3.10
-  "rich",                                                                     # >=3.9.0
   "flask",                                                                    # >=3.9
   "flask-wtf",                                                                # >=3.10
   "waitress",                                                                 # >=3.9.0
@@ -36,19 +35,17 @@ license = "MIT"
 license-files = ["LICENSE"]
 
 [project.optional-dependencies]
+epub = [
+  "Pillow", # Manga EPUB image dimensions and WebP conversion
+]
 sso = [
-  "authlib",                                                                  # >=3.10
+  "authlib", # >=3.10
 ]
 discord = [
-  "discord.py",                                                               # optional Discord request bot
+  "discord.py", # optional Discord request bot
 ]
-test = [
-  "pytest",
-]
-all = [
-  "authlib",
-  "discord.py",
-]
+test = ["pytest"]
+all = ["authlib", "discord.py", "Pillow"]
 
 
 [project.urls]
@@ -85,7 +82,6 @@ aniworld = "aniworld.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# The two legacy scripts in tests/ are manual smoke checks against the live
-# sites. They expose no test functions, so pytest collects nothing from them.
+# Manual test_providers_*.py scripts are excluded in tests/conftest.py.
 python_files = ["test_*.py"]
 addopts = "--strict-markers"

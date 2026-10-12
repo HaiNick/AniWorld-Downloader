@@ -18,35 +18,39 @@ from urllib.parse import urlparse
 
 try:
     from ...config import (
+        BS_HOST_PATTERN,
         DEFAULT_USER_AGENT,
         Audio,
         Subtitles,
         build_provider_attempt_order,
         logger,
     )
-    from ...extractors import provider_functions
     from ..common import check_downloaded, run_each
     from ..common.common import clean_title
     from ..common.common import download as episode_download
     from ..common.common import syncplay as episode_syncplay
     from ..common.common import watch as episode_watch
+    from ..common.extraction import resolve_stream_url
     from ..common.http import get_html, get_session
+    from ..common.paths import resolve_download_path
     from ..common.provider_map import host_to_provider
 except ImportError:
     from aniworld.config import (
+        BS_HOST_PATTERN,
         DEFAULT_USER_AGENT,
         Audio,
         Subtitles,
         build_provider_attempt_order,
         logger,
     )
-    from aniworld.extractors import provider_functions
     from aniworld.models.common import check_downloaded, run_each
     from aniworld.models.common.common import clean_title
     from aniworld.models.common.common import download as episode_download
     from aniworld.models.common.common import syncplay as episode_syncplay
     from aniworld.models.common.common import watch as episode_watch
+    from aniworld.models.common.extraction import resolve_stream_url
     from aniworld.models.common.http import get_html, get_session
+    from aniworld.models.common.paths import resolve_download_path
     from aniworld.models.common.provider_map import host_to_provider
 
 # Official domains for search / browse / episode listings. bs.cine.to answers
@@ -78,6 +82,23 @@ _BS_HOSTS = (
     "burning-series.net",
     "bs.to",
 )
+
+
+class BurningSeriesVPNWarning(RuntimeError):
+    """The stream mirrors returned a VPN warning instead of a player."""
+
+
+def _is_vpn_warning(page_html):
+    # Large inline styles can put the actual warning beyond the first 6 KB.
+    text = re.sub(
+        r"<(script|style)\b[^>]*>.*?</\1\s*>",
+        "",
+        page_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).lower()
+    return "vpn" in text and any(
+        marker in text for marker in ("burning series", "zensur", "gesperrt")
+    )
 
 
 def bs_current_base():
@@ -186,10 +207,7 @@ def _resolve_hoster_link(hoster_path, referer):
             # German ISPs block burning-series, so the site serves a "you must
             # use a VPN" interstitial instead of the player. Detect it to give a
             # clear reason instead of a vague failure.
-            low = player_html[:6000].lower()
-            if "vpn" in low and (
-                "burning series" in low or "zensur" in low or "gesperrt" in low
-            ):
+            if _is_vpn_warning(player_html):
                 vpn_blocked = True
                 last_err = RuntimeError("VPN required")
                 continue
@@ -207,9 +225,13 @@ def _resolve_hoster_link(hoster_path, referer):
 
             # Follow the redirect (Chrome impersonation passes Turnstile).
             try:
-                _body, final = _bs_curl_get(stream_url, player_url)
+                body, final = _bs_curl_get(stream_url, player_url)
                 if final and not _is_bs_host(final):
                     return final
+                if _is_vpn_warning(body):
+                    vpn_blocked = True
+                    last_err = RuntimeError("VPN warning instead of a player")
+                    continue
             except Exception as exc:
                 logger.debug(f"burning-series redirect follow failed: {exc}")
 
@@ -225,10 +247,9 @@ def _resolve_hoster_link(hoster_path, referer):
                 last_err = exc
 
         if vpn_blocked:
-            raise RuntimeError(
-                "burning-series is geo-blocked for German ISPs and serves a "
-                "'use a VPN' page instead of the player — run the app/container "
-                "behind a VPN to download from burning-series."
+            raise BurningSeriesVPNWarning(
+                "BurningSeries returned a VPN warning page instead of a player; "
+                "no usable stream mirror was found."
             )
         raise RuntimeError(
             "burning-series: could not resolve the hoster embed on "
@@ -323,15 +344,11 @@ class BurningSeriesEpisode(_BSLanguageMixin):
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            raw = self.__selected_path_param or os.getenv(
-                "ANIWORLD_SERIES_DOWNLOAD_PATH"
-            ) or os.getenv(
-                "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
+            self.__selected_path = str(
+                resolve_download_path(
+                    self.__selected_path_param, "ANIWORLD_SERIES_DOWNLOAD_PATH"
+                )
             )
-            path = Path(raw).expanduser()
-            if not path.is_absolute():
-                path = Path.home() / path
-            self.__selected_path = str(path)
         return self.__selected_path
 
     @selected_path.setter
@@ -441,14 +458,7 @@ class BurningSeriesEpisode(_BSLanguageMixin):
 
     @property
     def stream_url(self):
-        try:
-            return provider_functions[
-                f"get_direct_link_from_{self.selected_provider.lower()}"
-            ](self.provider_url)
-        except KeyError:
-            raise ValueError(
-                f"The provider '{self.selected_provider}' is not yet implemented."
-            )
+        return resolve_stream_url(self)
 
     @property
     def _base_folder(self):
@@ -534,7 +544,8 @@ class BurningSeriesSeason(_BSLanguageMixin):
             return []
         rows = []
         for m in re.finditer(
-            r'<td><a href="(serie/[^"]+?/(\d+)/([^"/]+)/[a-z]{2})"', table.group(1)
+            rf'<td><a href="(?:https?://{BS_HOST_PATTERN}/|/)?(serie/[^"]+?/(\d+)/([^"/]+)/[a-z]{{2}})"',
+            table.group(1),
         ):
             rows.append((m.group(1), int(m.group(2)), m.group(3)))
         return rows
@@ -703,7 +714,9 @@ class BurningSeriesSeries:
             numbers = set()
             # Season tabs look like <li class="sN"><a href="serie/slug/N/lang">N</a>
             for m in re.finditer(
-                r'href="/?serie/' + re.escape(self.slug) + r'/(\d+)(?:/[a-z]{2})?"',
+                rf'href="(?:https?://{BS_HOST_PATTERN}/|/)?serie/'
+                + re.escape(self.slug)
+                + r'/(\d+)(?:/[a-z]{2})?"',
                 self._html,
                 re.IGNORECASE,
             ):

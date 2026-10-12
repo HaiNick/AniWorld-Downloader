@@ -42,11 +42,13 @@
     sto: "Search SerienStream...",
     burningseries: "Search BurningSeries...",
     megakino: "Search MegaKino...",
-    cineby: "Search Cineby...",
+    moflix: "Search Moflix...",
     kinox: "Search Kinox...",
     filmpalast: "Search FilmPalast...",
     filmo: "Search Filmo...",
     htv: "Search Hanime...",
+    hentaitv: "Search HentaiTV...",
+    hentaihaven: "Search HentaiHaven...",
     mangafire: "Search MangaFire..."
   };
 
@@ -58,7 +60,11 @@
     Japanese: { flags: ["jp"], text: "Dub", css: "badge-german-dub" }
   };
 
-  let currentSite = "aniworld";
+  // Any site can be switched off in the settings, so the page opens on the
+  // first tab that is actually there rather than on a fixed one
+  const firstSite = () => (siteButtons[0] ? siteButtons[0].dataset.site : "aniworld");
+
+  let currentSite = firstSite();
   let downloadedFolders = [];
   let customPaths = [];
 
@@ -71,7 +77,22 @@
   let episodeLoads = {};
   let availableProviders = null;
 
-  const isHanime = (url) => url.includes("hanime.tv/");
+  // Sites that stream from their own player with a single track, so there is
+  // no language or hoster to choose
+  const FIXED_STREAMS = {
+    "hanime.tv": { language: "Japanese", provider: "HanimeTV" },
+    "hentai.tv": { language: "English Sub", provider: "HentaiTV" },
+    "hentaihaven.xxx": { language: "English Sub", provider: "HentaiHaven" }
+  };
+
+  function fixedStream(url) {
+    try {
+      return FIXED_STREAMS[new URL(url).hostname.replace(/^www\./, "")] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   const isMangaFire = (url) => url.includes("mangafire.to/");
 
   /* ===== Site switch ===== */
@@ -218,25 +239,33 @@
   });
 
   /* ===== Genres =====
-     Only aniworld has genre pages. Picking one takes over the results grid so
-     the chips stay reachable and you can hop straight to the next genre. */
-  let genresLoaded = false;
+     Every site that has genre pages of its own gets the chip bar, GENRE_SITES
+     says which those are. Picking a genre takes over the results grid so the
+     chips stay reachable and you can hop straight to the next one. */
+  const genreChips = {};
   let activeGenre = null;
+  let activeGenreSite = null;
   let genrePage = 1;
   let genreItems = [];
   let genreLoading = false;
 
   function updateGenreBar() {
-    genreBar.hidden = currentSite !== "aniworld";
-    if (!genreBar.hidden) loadGenres();
+    genreList.innerHTML = "";
+    genreBar.hidden = !(window.GENRE_SITES || []).includes(currentSite);
+    if (!genreBar.hidden) loadGenres(currentSite);
   }
 
-  async function loadGenres() {
-    if (genresLoaded) return;
-    genresLoaded = true;
+  async function loadGenres(site) {
+    if (genreChips[site]) {
+      genreList.innerHTML = genreChips[site];
+      return;
+    }
+
+    genreList.innerHTML =
+      `<span class="genre-hint">${t("common.loading", "Loading...")}</span>`;
     try {
-      const data = await apiFetch("/api/genres");
-      genreList.innerHTML = (data.genres || [])
+      const data = await apiFetch(`/api/genres?site=${encodeURIComponent(site)}`);
+      genreChips[site] = (data.genres || [])
         .map(
           (genre) =>
             `<button type="button" class="genre-chip" role="listitem"
@@ -244,13 +273,20 @@
         )
         .join("");
     } catch (error) {
-      genresLoaded = false;
-      genreBar.hidden = true;
+      // the bar is a shortcut, not the only way in, so it steps aside quietly
+      if (site === currentSite) {
+        genreList.innerHTML = "";
+        genreBar.hidden = true;
+      }
+      return;
     }
+    // a slow list can land after the user already moved on to another site
+    if (site === currentSite) genreList.innerHTML = genreChips[site];
   }
 
   function resetGenre() {
     activeGenre = null;
+    activeGenreSite = null;
     genreItems = [];
     genreMore.hidden = true;
     genreList
@@ -258,9 +294,11 @@
       .forEach((chip) => chip.classList.remove("active"));
   }
 
+  // Back to the site's default view: no genre open, chips and browse rows back
   function clearGenre() {
     resetGenre();
     resultsGrid.innerHTML = "";
+    updateGenreBar();
     showBrowseRows();
   }
 
@@ -274,6 +312,7 @@
     }
     resetGenre();
     activeGenre = chip.dataset.slug;
+    activeGenreSite = currentSite;
     chip.classList.add("active");
     searchInput.value = "";
     browse.hidden = true;
@@ -286,19 +325,23 @@
   async function loadGenrePage(page) {
     if (genreLoading || !activeGenre) return;
     const slug = activeGenre;
+    const site = activeGenreSite;
     genreLoading = true;
     genreMoreBtn.disabled = true;
     if (page === 1) searchSpinner.classList.add("active");
 
     try {
       const data = await apiFetch(
-        `/api/genre?slug=${encodeURIComponent(slug)}&page=${page}`
+        `/api/genre?site=${encodeURIComponent(site)}` +
+          `&slug=${encodeURIComponent(slug)}&page=${page}`
       );
       // a slow page 1 can land after the user already picked another genre
-      if (slug !== activeGenre) return;
+      if (slug !== activeGenre || site !== activeGenreSite) return;
       genrePage = page;
       genreItems = genreItems.concat(data.results || []);
       renderCards(resultsGrid, genreItems);
+      // serienstream and burningseries list no posters, fill them in per card
+      loadMissingPosters();
       genreMore.hidden = !data.has_more;
     } catch (error) {
       showToast(`${t("browse.genre_failed", "Could not load genre")}: ${error.message}`);
@@ -313,12 +356,16 @@
   /* ===== Search ===== */
   async function doSearch() {
     const keyword = searchInput.value.trim();
+    // submitting an empty box is the way back out of a search
     if (!keyword) {
       clearGenre();
       return;
     }
 
     resetGenre();
+    // the chips discover what a site has, a hit list is not that, so they go
+    // with the browse rows and come back with them
+    genreBar.hidden = true;
     searchBtn.disabled = true;
     searchSpinner.classList.add("active");
     resultsGrid.innerHTML = "";
@@ -336,16 +383,26 @@
     }
   }
 
-  // serienstream search gives no posters, fetch them per card
+  // serienstream and burningseries give no posters, fetch them per card. One
+  // request per card is enough of a round trip to keep the answers around: a
+  // genre's "Load more" re-renders every card that is already on screen.
+  const posterCache = {};
+
   function loadMissingPosters() {
     resultsGrid.querySelectorAll(".poster-card").forEach(async (card) => {
       const image = card.querySelector("img");
       if (image.getAttribute("src")) return;
+      const url = card.dataset.url;
+      if (posterCache[url]) {
+        image.src = posterCache[url];
+        return;
+      }
       try {
-        const data = await apiFetch(
-          `/api/series?url=${encodeURIComponent(card.dataset.url)}`
-        );
-        if (data.poster_url) image.src = data.poster_url;
+        const data = await apiFetch(`/api/series?url=${encodeURIComponent(url)}`);
+        if (data.poster_url) {
+          posterCache[url] = data.poster_url;
+          image.src = data.poster_url;
+        }
       } catch (e) {
         /* a missing poster is not worth reporting */
       }
@@ -424,7 +481,9 @@
   }
 
   function rebuildLanguageOptions() {
-    const languages = window.SITE_LANGUAGES[currentSite] || window.SITE_LANGUAGES.aniworld;
+    const languages = (
+      window.SITE_LANGUAGES[currentSite] || window.SITE_LANGUAGES.aniworld
+    ).filter((language) => !(window.ENGLISH_SUB_DISABLED && language === "English Sub"));
     languageSelect.innerHTML = languages
       .map((language) => `<option value="${esc(language)}">${esc(language)}</option>`)
       .join("");
@@ -444,16 +503,17 @@
     const forLanguage = availableProviders && availableProviders[languageSelect.value];
     if (forLanguage && forLanguage.length) {
       fillProviderSelect(forLanguage);
-    } else if (currentSite !== "megakino") {
+    } else if (!["megakino", "moflix"].includes(currentSite)) {
       fillProviderSelect(window.STATIC_PROVIDERS);
     } else {
       providerSelect.innerHTML = "";
     }
   }
 
-  // Hide language options the title does not actually offer
+  // Hide language options the title does not actually offer. The probe only
+  // sees the first episode, so this can be switched off in the settings.
   function restrictLanguages() {
-    if (!availableProviders) return;
+    if (!availableProviders || window.SHOW_ALL_LANGUAGES) return;
     const offered = Object.keys(availableProviders);
     if (!offered.length) return;
 
@@ -489,13 +549,13 @@
     showSkeleton(true);
     openModal("seriesOverlay");
 
-    const hanime = isHanime(url);
+    const fixed = fixedStream(url);
     const manga = isMangaFire(url);
-    languageProviderRow.hidden = hanime || manga;
+    languageProviderRow.hidden = Boolean(fixed) || manga;
     mangaFireRow.hidden = !manga;
-    if (!hanime && !manga) {
+    if (!fixed && !manga) {
       rebuildLanguageOptions();
-      fillProviderSelect(currentSite === "megakino" ? [] : window.STATIC_PROVIDERS);
+      fillProviderSelect(["megakino", "moflix"].includes(currentSite) ? [] : window.STATIC_PROVIDERS);
     }
     loadCustomPaths();
     loadAutosyncExclusion(url);
@@ -503,7 +563,7 @@
     try {
       const [series, seasonData] = await Promise.all([
         apiFetch(`/api/series?url=${encodeURIComponent(url)}`),
-        apiFetch(`/api/seasons?url=${encodeURIComponent(url)}`)
+        apiFetch(`/api/seasons?url=${encodeURIComponent(url)}${manga ? `&mangafire_format=${encodeURIComponent(el("mangaFireFormat").value)}` : ""}`)
       ]);
       if (token !== openToken) return;
 
@@ -521,7 +581,7 @@
 
       // The provider probe narrows the language/provider selects, so resolve it
       // before revealing or the dropdowns would visibly change afterwards
-      if (firstEpisodes.length && !hanime && !manga) {
+      if (firstEpisodes.length && !fixed && !manga) {
         await fetchProviders(firstEpisodes[0].url);
         if (token !== openToken) return;
       }
@@ -538,6 +598,10 @@
       showToast(`${t("index.load_failed", "Failed to load title")}: ${error.message}`);
     }
   }
+
+  el("mangaFireFormat").addEventListener("change", () => {
+    if (isMangaFire(seriesUrl)) openSeries(seriesUrl);
+  });
 
   // Only meaningful for aniworld titles, that is all Auto-Sync looks at
   async function loadAutosyncExclusion(url) {
@@ -578,7 +642,8 @@
   function seasonLabel(season, count) {
     const shown = typeof count === "number" ? count : season.episode_count;
     if (currentSite === "mangafire") {
-      return `${t("index.chapter", "Chapter")} ${season.season_number}`;
+      const label = season.is_volume ? t("index.volume", "Volume") : t("index.chapter", "Chapter");
+      return `${label} ${season.season_number}`;
     }
     const name = season.are_movies
       ? t("index.movies", "Movies")
@@ -756,8 +821,18 @@
     });
   });
 
-  function loadAllSeasons() {
-    return Promise.all(seasons.map((_, index) => loadEpisodes(index)));
+  async function loadAllSeasons() {
+    // Keep enough parallelism for a responsive modal without starting one
+    // source-site request per season at the same time as a background download.
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < seasons.length) {
+        const index = nextIndex++;
+        await loadEpisodes(index);
+      }
+    }
+    const workerCount = Math.min(2, seasons.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
   }
 
   /* ===== Download ===== */
@@ -771,7 +846,7 @@
     const boxes = Array.from(accordion.querySelectorAll(selector(all)));
     if (currentSite !== "mangafire") return boxes.map((box) => box.value);
 
-    // MangaFire downloads whole chapters with a page selection
+    // MangaFire downloads native chapters or volumes with a page selection
     const chapters = new Map();
     boxes.forEach((box) => {
       const chapter = box.dataset.chapterUrl;
@@ -804,14 +879,14 @@
       return;
     }
 
-    const hanime = isHanime(seriesUrl);
+    const fixed = fixedStream(seriesUrl);
     const manga = isMangaFire(seriesUrl);
     const body = {
       episodes,
       title: seriesTitle,
       series_url: seriesUrl,
-      language: hanime ? "Japanese" : manga ? "MangaFire" : languageSelect.value,
-      provider: hanime ? "HanimeTV" : manga ? "MangaFire" : providerSelect.value
+      language: fixed ? fixed.language : manga ? "MangaFire" : languageSelect.value,
+      provider: fixed ? fixed.provider : manga ? "MangaFire" : providerSelect.value
     };
     if (manga) body.mangafire_format = el("mangaFireFormat").value;
     if (customPathSelect.value) body.custom_path_id = Number(customPathSelect.value);
@@ -843,6 +918,6 @@
   });
 
   loadDownloadedFolders().then(() => {
-    switchSite("aniworld");
+    switchSite(firstSite());
   });
 })();

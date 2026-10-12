@@ -67,9 +67,9 @@
           ? esc(row.reason)
           : row.episodes
             ? t("autosync.queued_episodes", "{count} episodes queued in {language}", {
-                count: row.episodes,
-                language: row.language || ""
-              })
+              count: row.episodes,
+              language: row.language || ""
+            })
             : esc(row.language || "");
         // A show held twice produces one row per copy, so each has to say which
         // library and language folder it is talking about.
@@ -101,6 +101,7 @@
     el("howFill").hidden = Boolean(data.new_only);
     el("howNewOnly").hidden = !data.new_only;
 
+    el("scheduleValue").textContent = data.schedule || "-";
     el("lastRun").textContent = formatTime(data.last_run);
     el("nextRun").textContent = data.running
       ? t("autosync.running", "Running...")
@@ -109,9 +110,9 @@
     const report = data.last_report;
     el("lastResult").textContent = report && !report.error
       ? t("autosync.result", "{queued} of {checked} queued", {
-          queued: report.queued,
-          checked: report.checked
-        })
+        queued: report.queued,
+        checked: report.checked
+      })
       : "-";
 
     renderReport(report);

@@ -14,7 +14,6 @@ from ...config import (
     build_provider_attempt_order,
     logger,
 )
-from ...extractors import provider_functions
 from ..common import ProviderData, check_downloaded
 from ..common.common import (
     download as episode_download,
@@ -25,6 +24,8 @@ from ..common.common import (
 from ..common.common import (
     watch as episode_watch,
 )
+from ..common.extraction import resolve_stream_url
+from ..common.paths import resolve_download_path
 
 
 class AniworldEpisode:
@@ -180,16 +181,7 @@ class AniworldEpisode:
 
     @property
     def stream_url(self):
-        try:
-            stream_url = provider_functions[
-                f"get_direct_link_from_{self.selected_provider.lower()}"
-            ](self.provider_url)
-        except KeyError:
-            raise ValueError(
-                f"The provider '{self.selected_provider}' is not yet implemented."
-            )
-
-        return stream_url
+        return resolve_stream_url(self)
 
     # TODO: add this into a common base class
     @property
@@ -207,6 +199,7 @@ class AniworldEpisode:
                     season=f"{self.season.season_number:02d}",
                     episode=f"{self.episode_number:03d}",
                     language=self.selected_language,
+                    resolution=getattr(self, "_resolution", "unknown"),
                 )
                 self.__base_folder = Path(self.selected_path) / folder_str
         return self.__base_folder
@@ -227,6 +220,7 @@ class AniworldEpisode:
                     season=f"{self.season.season_number:02d}",
                     episode=f"{self.episode_number:03d}",
                     language=self.selected_language,
+                    resolution=getattr(self, "_resolution", "unknown"),
                 )
                 self.__folder_path = self._base_folder / folder_str
         return self.__folder_path
@@ -251,6 +245,7 @@ class AniworldEpisode:
             file_template = file_template.replace("%season%", "{season}")
             file_template = file_template.replace("%episode%", "{episode}")
             file_template = file_template.replace("%language%", "{language}")
+            file_template = file_template.replace("%resolution%", "{resolution}")
 
             self.__file_name = file_template.format(
                 title=self.series.title_cleaned,
@@ -259,6 +254,7 @@ class AniworldEpisode:
                 season=f"{self.season.season_number:02d}",
                 episode=f"{self.episode_number:03d}",
                 language=self.selected_language,
+                resolution=getattr(self, "_resolution", "unknown"),
             )
         return self.__file_name
 
@@ -375,16 +371,9 @@ class AniworldEpisode:
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            raw_path = self.__selected_path_param or os.getenv(
-                "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
+            self.__selected_path = str(
+                resolve_download_path(self.__selected_path_param)
             )
-
-            path = Path(raw_path).expanduser()
-
-            if not path.is_absolute():
-                path = Path.home() / path
-
-            self.__selected_path = str(path)
         return self.__selected_path
 
     @selected_path.setter

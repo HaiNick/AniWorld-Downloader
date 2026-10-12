@@ -2,9 +2,9 @@ import re
 from html import unescape
 from urllib.parse import urljoin, urlparse
 
-from ...config import SERIENSTREAM_SERIES_PATTERN, logger
+from ...config import SERIENSTREAM_SERIES_PATTERN, STO_HOST_PATTERN, logger
 from ..common import clean_title
-from .http import sto_get
+from .http import response_text, sto_get
 
 
 class SerienstreamSeries:
@@ -168,7 +168,7 @@ class SerienstreamSeries:
         if self.__html is None:
             logger.debug(f"fetching ({self.url})...")
             resp = sto_get(self.url)
-            self.__html = resp.text
+            self.__html = response_text(resp, self.url)
         return self.__html
 
     # -----------------------------
@@ -244,7 +244,7 @@ class SerienstreamSeries:
         """
 
         pattern = re.compile(
-            r'<a class="small text-muted" href="(?:https://(?:serienstream|s)\.to)?/jahr/(\d{4})">(\d{4})</a>'
+            rf'<a class="small text-muted" href="(?:https?://{STO_HOST_PATTERN})?/jahr/(\d{{4}})">(\d{{4}})</a>'
         )
 
         match = pattern.search(self._html)
@@ -296,7 +296,7 @@ class SerienstreamSeries:
 
         # serienstream.to uses both src= and data-src= depending on page version.
         pattern = re.compile(
-            r'(?:data-)?src="(?P<url>(?:https?://(?:serienstream|s)\.to)?/media/images/channel/[^"]+)"'
+            rf'(?:data-)?src="(?P<url>(?:https?://{STO_HOST_PATTERN})?/media/images/channel/[^"]+)"'
         )
         match = pattern.search(self._html)
         if match:
@@ -552,7 +552,7 @@ class SerienstreamSeries:
         # serienstream.to currently serves both absolute and relative hrefs.
         # Support both and normalize them to absolute URLs.
         pattern = re.compile(
-            r'href="(?P<href>(?:https?://(?:serienstream|s)\.to)?/serie/[^\"\s]+/staffel-\d+)/?"'
+            rf'href="(?P<href>(?:https?://{STO_HOST_PATTERN})?/serie/[^\"\s]+/staffel-\d+)/?"'
         )
 
         matches = pattern.finditer(self._html)
@@ -581,7 +581,7 @@ class SerienstreamSeries:
         """
 
         pattern = re.compile(
-            r'href="(?:https?://(?:serienstream|s)\.to)?/serie/[^\"\s]+/staffel-(\d+)'
+            rf'href="(?:https?://{STO_HOST_PATTERN})?/serie/[^\"\s]+/staffel-(\d+)'
         )
 
         matches = pattern.findall(self._html)
@@ -596,16 +596,16 @@ class SerienstreamSeries:
     # PUBLIC METHODS
     # -----------------------------
     def download(self):
+        # One failed episode must not abandon the rest of the batch.
         for season in self.seasons:
-            for episode in season.episodes:
-                episode.download()
+            season.download()
 
     def watch(self):
+        # One failed episode must not abandon the rest of the batch.
         for season in self.seasons:
-            for episode in season.episodes:
-                episode.watch()
+            season.watch()
 
     def syncplay(self):
+        # One failed episode must not abandon the rest of the batch.
         for season in self.seasons:
-            for episode in season.episodes:
-                episode.syncplay()
+            season.syncplay()
