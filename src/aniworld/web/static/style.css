@@ -399,32 +399,6 @@ h3 {
   padding-left: 6px;
 }
 
-/* Diagonal "New" flash over the nav button, so people notice Auto-Sync was
-   reworked instead of assuming it is the old one. */
-.has-ribbon {
-  position: relative;
-  overflow: visible;
-  /* room for the ribbon so it does not sit on the next nav item */
-  margin-right: 14px;
-}
-
-.new-ribbon {
-  position: absolute;
-  top: -7px;
-  right: -12px;
-  transform: rotate(18deg);
-  background: var(--gradient-accent);
-  color: var(--text-on-accent);
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 4px;
-  box-shadow: var(--shadow-ribbon);
-  pointer-events: none;
-}
-
 .queue-badge {
   background: var(--accent);
   color: var(--text-on-accent);
@@ -2574,18 +2548,6 @@ details.advanced summary:hover {
     min-width: 0;
     padding: 8px 6px;
     white-space: nowrap;
-  }
-
-  /* the desktop rule reserves room to the right of Auto-Sync for the ribbon,
-     which here would just make that one column narrower than the other two */
-  .has-ribbon {
-    margin-right: 0;
-  }
-
-  .new-ribbon {
-    top: -5px;
-    right: -2px;
-    transform: rotate(12deg);
   }
 
   /* the search box and the sort dropdown get a line of their own rather than
