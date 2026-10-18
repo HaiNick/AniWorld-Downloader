@@ -81,11 +81,11 @@ def test_a_custom_path_name_can_only_be_used_once(client, tmp_path):
     assert db.get_custom_paths()[0]["path"] == str(tmp_path)
 
 
-def test_excluding_the_same_series_twice_is_harmless():
+def test_syncing_the_same_series_twice_is_harmless():
     url = "https://aniworld.to/anime/stream/naruto"
-    db.add_autosync_exclusion(url, "Naruto")
-    db.add_autosync_exclusion(url, "Naruto again")
-    assert len(db.get_autosync_exclusions()) == 1
+    db.save_autosync_series(url, title="Naruto", language="German Dub")
+    db.save_autosync_series(url, title="Naruto again", language="German Dub")
+    assert len(db.get_autosync_series()) == 1
 
 
 def test_creating_two_keys_with_the_same_name_is_fine(client):

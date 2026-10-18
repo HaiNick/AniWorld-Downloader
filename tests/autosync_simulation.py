@@ -45,6 +45,8 @@ class Sim:
 
         autosync._now = lambda: self.now
         autosync.db.get_autosync_state = lambda: dict(self.state)
+        # Only the global schedule is simulated, no series has one of its own
+        autosync.db.get_autosync_series = list
         autosync.db.set_autosync_state = lambda **kw: self.state.update(
             {k: (str(v) if v is not None else None) for k, v in kw.items()}
         )

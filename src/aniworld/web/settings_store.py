@@ -74,14 +74,6 @@ def autosync_enabled():
     return _flag("ANIWORLD_ENABLE_AUTOSYNC")
 
 
-def autosync_new_only():
-    """Queue only the episodes from the feed instead of filling the gaps.
-
-    Off by default so upgrading does not silently change what AutoSync does.
-    """
-    return _flag("ANIWORLD_AUTOSYNC_NEW_ONLY")
-
-
 # ---------------------------------------------------------------------------
 # When Auto-Sync runs
 #
@@ -408,7 +400,6 @@ def read_settings():
         **{f"enable_{site}": state for site, state in enabled_sites().items()},
         "enable_library": library_enabled(),
         "enable_autosync": autosync_enabled(),
-        "autosync_new_only": autosync_new_only(),
         "autosync_mode": autosync_mode(),
         "autosync_interval": autosync_interval(),
         "autosync_interval_seconds": autosync_interval_seconds(),
@@ -441,7 +432,6 @@ _BOOL_SETTINGS = {
     "show_all_languages": "ANIWORLD_SHOW_ALL_LANGUAGES",
     "enable_library": "ANIWORLD_ENABLE_LIBRARY",
     "enable_autosync": "ANIWORLD_ENABLE_AUTOSYNC",
-    "autosync_new_only": "ANIWORLD_AUTOSYNC_NEW_ONLY",
     "movie_folder": "ANIWORLD_MOVIE_FOLDER",
     **{f"enable_{site}": site_env_key(site) for site in SITE_KEYS},
 }
@@ -621,7 +611,6 @@ def _env_sections():
             [
                 ("ANIWORLD_ENABLE_LIBRARY", _one_or_zero(library_enabled())),
                 ("ANIWORLD_ENABLE_AUTOSYNC", _one_or_zero(autosync_enabled())),
-                ("ANIWORLD_AUTOSYNC_NEW_ONLY", _one_or_zero(autosync_new_only())),
                 ("ANIWORLD_AUTOSYNC_MODE", autosync_mode()),
                 ("ANIWORLD_AUTOSYNC_INTERVAL", autosync_interval()),
                 ("ANIWORLD_AUTOSYNC_CRON", autosync_cron()),

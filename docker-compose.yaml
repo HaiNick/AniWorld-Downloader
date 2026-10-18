@@ -9,7 +9,7 @@ services:
       # Persist downloads on the host so they survive container recreation.
       - ./Downloads:/app/Downloads
       # Persist application config and auth database across restarts. This holds
-      # the database (users, API keys, custom paths, Auto-Sync exclusions), your
+      # the database (users, API keys, custom paths, Auto-Sync series), your
       # .env, and the custom.css / custom.frag a theme is saved to. Losing this
       # volume loses all of them.
       - aniworld-data:/home/aniworld/.aniworld
@@ -57,8 +57,7 @@ services:
     #   ANIWORLD_ENABLE_MEGAKINO: "1"                 # Off means no tab and no rows. At least one has to stay on.
     #   ANIWORLD_ENABLE_FILMPALAST: "1"
     #   ANIWORLD_ENABLE_MANGAFIRE: "1"
-    #   ANIWORLD_ENABLE_AUTOSYNC: "0"                 # Auto-Sync: on a schedule, queue new episodes of series you already have
-    #   ANIWORLD_AUTOSYNC_NEW_ONLY: "0"               # 1 = queue only the newly announced episodes instead of every missing one
+    #   ANIWORLD_ENABLE_AUTOSYNC: "0"                 # Auto-Sync: on a schedule, queue new episodes of the series you ticked "Sync this" for
     #   ANIWORLD_AUTOSYNC_MODE: "interval"            # When Auto-Sync runs: interval (every so often) | cron (fixed times)
     #   ANIWORLD_AUTOSYNC_INTERVAL: "24h"             # Interval mode: 24h | 6h | 90m | 1h30m (a bare number means hours)
     #   ANIWORLD_AUTOSYNC_CRON: "0 3 * * *"           # Cron mode, local time. Plain language works too ("every monday, friday at 10pm")
