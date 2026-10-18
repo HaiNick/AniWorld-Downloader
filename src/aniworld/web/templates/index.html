@@ -225,11 +225,46 @@
       </div>
 
       {% if is_admin %}
-      <div class="control-row" id="autosyncRow" hidden>
+      <div class="autosync-box" id="autosyncRow" hidden>
         <label class="checkbox" style="margin-top:0">
-          <input type="checkbox" id="autosyncExclude" />
-          <span data-i18n="index.autosync_exclude">Exclude from Auto-Sync</span>
+          <input type="checkbox" id="autosyncTrack" />
+          <span data-i18n="index.autosync_track">Sync this with Auto-Sync</span>
         </label>
+        <div id="autosyncOptions" hidden>
+          <div class="control-row">
+            <label class="field">
+              <span class="field-label" data-i18n="index.autosync_start_season">Start at season</span>
+              <input type="number" id="autosyncStartSeason" min="0" step="1" value="1" />
+            </label>
+            <label class="field">
+              <span class="field-label" data-i18n="index.autosync_start_episode">Episode</span>
+              <input type="number" id="autosyncStartEpisode" min="1" step="1" value="1" />
+            </label>
+          </div>
+          <div class="control-row">
+            <label class="field">
+              <span class="field-label" data-i18n="index.autosync_cadence">Check it</span>
+              <select id="autosyncCadence">
+                <option value="global" data-i18n="autosync.cadence_global">On the Auto-Sync schedule</option>
+                <option value="daily" data-i18n="autosync.cadence_daily">Every day</option>
+                <option value="weekly" data-i18n="autosync.cadence_weekly">Every week</option>
+              </select>
+            </label>
+            <label class="field" id="autosyncWeekdayField" hidden>
+              <span class="field-label" data-i18n="index.autosync_weekday">On</span>
+              <select id="autosyncWeekday"></select>
+            </label>
+            <label class="field" id="autosyncTimeField" hidden>
+              <span class="field-label" data-i18n="index.autosync_time">At</span>
+              <input type="time" id="autosyncTime" value="22:00" />
+            </label>
+          </div>
+          <p class="hint">
+            <span id="autosyncSummary"></span>
+            <button class="btn btn-ghost btn-small" id="autosyncUseCurrent" type="button" hidden
+              data-i18n="index.autosync_use_current">Use the language and folder above</button>
+          </p>
+        </div>
       </div>
       {% endif %}
 

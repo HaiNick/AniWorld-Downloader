@@ -51,7 +51,7 @@ Prefer another installation method? Use [Docker](#docker) or download a standalo
 
 - Download individual episodes, whole seasons or series, movies, and manga chapters.
 - Search supported sites, track your download queue, and browse your library in the Web UI.
-- Schedule Auto-Sync checks for AniWorld titles already downloaded to your library.
+- Pick the series Auto-Sync keeps up to date, where each one starts, and when it is checked.
 - Choose available audio and subtitle languages, with fallback to other stream hosters.
 - Customize supported naming templates and output formats, including MKV/MP4 for video and JPG/CBZ/EPUB for manga; naming support varies by backend.
 - Watch through external players, with AniSkip and Anime4K support where applicable.

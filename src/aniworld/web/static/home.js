@@ -24,7 +24,7 @@
   const customPathRow = el("customPathRow");
   const customPathSelect = el("customPathSelect");
   const autosyncRow = el("autosyncRow");
-  const autosyncExclude = el("autosyncExclude");
+  const autosyncTrack = el("autosyncTrack");
   const accordion = el("seasonAccordion");
   const episodeSpinner = el("episodeSpinner");
   const selectAll = el("selectAll");
@@ -449,6 +449,7 @@
       (path.default_sites || "").split(",").includes(currentSite)
     );
     customPathSelect.value = preferred ? String(preferred.id) : "";
+    renderSyncBox();
   }
 
   async function loadDownloadedFolders() {
@@ -558,7 +559,7 @@
       fillProviderSelect(["megakino", "moflix"].includes(currentSite) ? [] : window.STATIC_PROVIDERS);
     }
     loadCustomPaths();
-    loadAutosyncExclusion(url);
+    loadAutosyncState(url);
 
     try {
       const [series, seasonData] = await Promise.all([
@@ -586,6 +587,7 @@
         if (token !== openToken) return;
       }
 
+      renderSyncBox();
       showSkeleton(false);
     } catch (error) {
       if (token !== openToken) return;
@@ -603,40 +605,157 @@
     if (isMangaFire(seriesUrl)) openSeries(seriesUrl);
   });
 
-  // Only meaningful for aniworld titles, that is all Auto-Sync looks at
-  async function loadAutosyncExclusion(url) {
+  /* ===== Auto-Sync ("Sync this") =====
+     Only sites whose season pages list numbered episodes can be synced. The
+     language and folder are taken from the selects above when ticking, and
+     stay put after that, so downloading one episode in another language does
+     not quietly move the sync along with it. */
+  const SYNC_SITES = ["aniworld", "sto"];
+  const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  let trackedSeries = null;
+
+  if (autosyncRow) {
+    el("autosyncWeekday").innerHTML = WEEKDAYS.map(
+      (day, index) =>
+        `<option value="${index}">${esc(t(`settings.day_${day}`, WEEKDAY_NAMES[index]))}</option>`
+    ).join("");
+  }
+
+  function syncFields() {
+    return {
+      start_season: Number(el("autosyncStartSeason").value || 1),
+      start_episode: Number(el("autosyncStartEpisode").value || 1),
+      cadence: el("autosyncCadence").value,
+      weekday: Number(el("autosyncWeekday").value),
+      run_time: el("autosyncTime").value || "22:00"
+    };
+  }
+
+  function fillSyncFields(row) {
+    el("autosyncStartSeason").value = row ? row.start_season : 1;
+    el("autosyncStartEpisode").value = row ? row.start_episode : 1;
+    el("autosyncCadence").value = row ? row.cadence : "global";
+    el("autosyncWeekday").value = row ? String(row.weekday) : "0";
+    el("autosyncTime").value = row ? row.run_time : "22:00";
+  }
+
+  function chosenPathId() {
+    return customPathSelect.value ? Number(customPathSelect.value) : null;
+  }
+
+  function renderSyncBox() {
+    if (!autosyncRow) return;
+    const cadence = el("autosyncCadence").value;
+    el("autosyncOptions").hidden = !autosyncTrack.checked;
+    el("autosyncWeekdayField").hidden = cadence !== "weekly";
+    el("autosyncTimeField").hidden = cadence === "global";
+
+    const summary = el("autosyncSummary");
+    const useCurrent = el("autosyncUseCurrent");
+    if (!trackedSeries) {
+      summary.textContent = t(
+        "index.autosync_uses_above",
+        "Syncs in the language and into the download folder picked above."
+      );
+      useCurrent.hidden = true;
+      return;
+    }
+    summary.textContent = t("index.autosync_syncs_in", "Syncs in {language} into {where}.", {
+      language: trackedSeries.language,
+      where: trackedSeries.where
+    });
+    useCurrent.hidden =
+      trackedSeries.language === languageSelect.value &&
+      (trackedSeries.custom_path_id || null) === chosenPathId();
+  }
+
+  async function loadAutosyncState(url) {
     if (!autosyncRow) return;
     autosyncRow.hidden = true;
-    if (!window.AUTOSYNC_ENABLED || !url.includes("aniworld.to/")) return;
+    trackedSeries = null;
+    if (!window.AUTOSYNC_ENABLED || !SYNC_SITES.includes(currentSite)) return;
     try {
-      const data = await apiFetch(
-        `/api/autosync/excluded?url=${encodeURIComponent(url)}`
-      );
-      autosyncExclude.checked = Boolean(data.excluded);
+      const data = await apiFetch(`/api/autosync/tracked?url=${encodeURIComponent(url)}`);
+      if (url !== seriesUrl) return;
+      trackedSeries = data.series || null;
+      autosyncTrack.checked = Boolean(data.tracked);
+      fillSyncFields(trackedSeries);
+      renderSyncBox();
       autosyncRow.hidden = false;
     } catch (e) {
       autosyncRow.hidden = true;
     }
   }
 
-  if (autosyncExclude) {
-    autosyncExclude.addEventListener("change", async () => {
+  async function saveTracking(extra = {}) {
+    const data = await apiSend("/api/autosync/tracked", "POST", {
+      series_url: seriesUrl,
+      title: seriesTitle,
+      tracked: true,
+      ...syncFields(),
+      ...extra
+    });
+    trackedSeries = data.series || null;
+    renderSyncBox();
+  }
+
+  function currentChoice() {
+    return { language: languageSelect.value, custom_path_id: chosenPathId() };
+  }
+
+  if (autosyncRow) {
+    autosyncTrack.addEventListener("change", async () => {
+      renderSyncBox();
       try {
-        await apiSend("/api/autosync/excluded", "POST", {
-          series_url: seriesUrl,
-          title: seriesTitle,
-          excluded: autosyncExclude.checked
-        });
-        showToast(
-          autosyncExclude.checked
-            ? t("index.autosync_excluded", "Excluded from Auto-Sync")
-            : t("index.autosync_included", "Included in Auto-Sync again")
-        );
+        if (autosyncTrack.checked) {
+          await saveTracking(currentChoice());
+          showToast(t("index.autosync_tracked", "Auto-Sync keeps this series up to date"));
+        } else {
+          await apiSend("/api/autosync/tracked", "POST", {
+            series_url: seriesUrl,
+            tracked: false
+          });
+          trackedSeries = null;
+          fillSyncFields(null);
+          renderSyncBox();
+          showToast(t("index.autosync_untracked", "No longer synced by Auto-Sync"));
+        }
       } catch (error) {
         showToast(error.message);
-        autosyncExclude.checked = !autosyncExclude.checked;
+        autosyncTrack.checked = !autosyncTrack.checked;
+        renderSyncBox();
       }
     });
+
+    ["autosyncStartSeason", "autosyncStartEpisode", "autosyncCadence", "autosyncWeekday", "autosyncTime"].forEach(
+      (id) => {
+        el(id).addEventListener("change", async () => {
+          renderSyncBox();
+          if (!autosyncTrack.checked) return;
+          try {
+            await saveTracking();
+            showToast(t("settings.saved", "Saved"));
+          } catch (error) {
+            showToast(error.message);
+            fillSyncFields(trackedSeries);
+            renderSyncBox();
+          }
+        });
+      }
+    );
+
+    el("autosyncUseCurrent").addEventListener("click", async () => {
+      try {
+        await saveTracking(currentChoice());
+        showToast(t("settings.saved", "Saved"));
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+
+    languageSelect.addEventListener("change", renderSyncBox);
+    customPathSelect.addEventListener("change", renderSyncBox);
   }
 
   function seasonLabel(season, count) {

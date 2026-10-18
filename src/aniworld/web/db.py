@@ -160,10 +160,20 @@ _SCHEMA = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_queue_status ON download_queue (status, position)",
     """
-    CREATE TABLE IF NOT EXISTS autosync_exclusions (
+    CREATE TABLE IF NOT EXISTS autosync_series (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         series_url TEXT NOT NULL UNIQUE,
         title TEXT NOT NULL DEFAULT '',
+        language TEXT NOT NULL,
+        custom_path_id INTEGER,
+        start_season INTEGER NOT NULL DEFAULT 1,
+        start_episode INTEGER NOT NULL DEFAULT 1,
+        cadence TEXT NOT NULL DEFAULT 'global'
+            CHECK(cadence IN ('global','daily','weekly')),
+        weekday INTEGER NOT NULL DEFAULT 0,
+        run_time TEXT NOT NULL DEFAULT '22:00',
+        last_checked TEXT,
+        last_result TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
     """,
@@ -814,49 +824,82 @@ def clear_captcha_url(queue_id):
 # ---------------------------------------------------------------------------
 # AutoSync
 # ---------------------------------------------------------------------------
-def get_autosync_exclusions():
+# Only series someone ticked "Sync this" for are synced. Each row carries the
+# language and folder to sync into, where to start, and when to check it.
+_AUTOSYNC_SERIES_FIELDS = (
+    "title",
+    "language",
+    "custom_path_id",
+    "start_season",
+    "start_episode",
+    "cadence",
+    "weekday",
+    "run_time",
+)
+
+
+def get_autosync_series():
     with session() as conn:
         return _rows(
-            conn, "SELECT * FROM autosync_exclusions ORDER BY title COLLATE NOCASE"
+            conn, "SELECT * FROM autosync_series ORDER BY title COLLATE NOCASE, id"
         )
 
 
-def excluded_series_urls():
+def get_autosync_series_by_id(series_id):
     with session() as conn:
-        rows = conn.execute("SELECT series_url FROM autosync_exclusions").fetchall()
-        return {row["series_url"] for row in rows}
+        return _row(conn, "SELECT * FROM autosync_series WHERE id = ?", (series_id,))
 
 
-def is_autosync_excluded(series_url):
+def get_autosync_series_by_url(series_url):
     with session() as conn:
-        return (
-            _row(
-                conn,
-                "SELECT id FROM autosync_exclusions WHERE series_url = ?",
-                (series_url,),
+        return _row(
+            conn, "SELECT * FROM autosync_series WHERE series_url = ?", (series_url,)
+        )
+
+
+def save_autosync_series(series_url, **fields):
+    """Insert a series or update the one already there. Returns its row."""
+    values = {k: v for k, v in fields.items() if k in _AUTOSYNC_SERIES_FIELDS}
+    with session() as conn:
+        existing = _row(
+            conn, "SELECT id FROM autosync_series WHERE series_url = ?", (series_url,)
+        )
+        if existing:
+            if values:
+                assignments = ", ".join(f"{column} = ?" for column in values)
+                conn.execute(
+                    f"UPDATE autosync_series SET {assignments} WHERE id = ?",
+                    (*values.values(), existing["id"]),
+                )
+            series_id = existing["id"]
+        else:
+            columns = ["series_url", *values]
+            placeholders = ", ".join("?" for _ in columns)
+            cur = conn.execute(
+                f"INSERT INTO autosync_series ({', '.join(columns)}) "
+                f"VALUES ({placeholders})",
+                (series_url, *values.values()),
             )
-            is not None
-        )
+            series_id = cur.lastrowid
+        return _row(conn, "SELECT * FROM autosync_series WHERE id = ?", (series_id,))
 
 
-def add_autosync_exclusion(series_url, title=""):
+def remove_autosync_series(series_url=None, series_id=None):
     with session() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO autosync_exclusions (series_url, title) VALUES (?, ?)",
-            (series_url, title),
-        )
-
-
-def remove_autosync_exclusion(series_url=None, exclusion_id=None):
-    with session() as conn:
-        if exclusion_id is not None:
-            conn.execute(
-                "DELETE FROM autosync_exclusions WHERE id = ?", (exclusion_id,)
-            )
+        if series_id is not None:
+            conn.execute("DELETE FROM autosync_series WHERE id = ?", (series_id,))
         elif series_url is not None:
             conn.execute(
-                "DELETE FROM autosync_exclusions WHERE series_url = ?", (series_url,)
+                "DELETE FROM autosync_series WHERE series_url = ?", (series_url,)
             )
+
+
+def record_autosync_check(series_id, checked_at, result):
+    with session() as conn:
+        conn.execute(
+            "UPDATE autosync_series SET last_checked = ?, last_result = ? WHERE id = ?",
+            (checked_at, result, series_id),
+        )
 
 
 def get_autosync_state():

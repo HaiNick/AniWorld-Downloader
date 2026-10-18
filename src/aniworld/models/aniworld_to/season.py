@@ -5,6 +5,14 @@ from ...config import ANIWORLD_SEASON_PATTERN, GLOBAL_SESSION, logger
 from ..common import run_each
 from .episode import AniworldEpisode
 
+# Flag graphics in the episode rows, see the table in __extract_episodes()
+_FLAG_LABELS = {
+    "german": "German Dub",
+    "english": "English Dub",
+    "japanese-german": "German Sub",
+    "japanese-english": "English Sub",
+}
+
 
 class AniworldSeason:
     """
@@ -44,6 +52,7 @@ class AniworldSeason:
         self.__season_number = None
         self.__episode_count = None
         self.__episodes = None
+        self.__episode_languages = None
 
         self.__html = None
 
@@ -99,6 +108,13 @@ class AniworldSeason:
         if self.__episodes is None:
             self.__episodes = self.__extract_episodes()
         return self.__episodes
+
+    @property
+    def episode_languages(self):
+        """Language badges keyed by episode number, parsed from this page."""
+        if self.__episode_languages is None:
+            self.__episode_languages = self.__extract_episode_languages()
+        return self.__episode_languages
 
     @property
     def episode_count(self):
@@ -307,6 +323,30 @@ class AniworldSeason:
             pos = tr_end
 
         return episodes
+
+    def __extract_episode_languages(self):
+        """Read flags from episode rows without fetching every episode page."""
+        if self.are_movies:
+            return {}
+
+        rows = re.findall(
+            r'<tr\b[^>]*itemtype="http://schema\.org/Episode"[^>]*>.*?</tr>',
+            self._html,
+            re.DOTALL,
+        )
+        languages = {}
+        for row in rows:
+            match = re.search(r'itemprop="episodeNumber"\s+content="(\d+)"', row)
+            if not match:
+                continue
+            labels = [
+                _FLAG_LABELS[flag]
+                for flag in re.findall(r"/public/img/([a-z-]+)\.svg", row)
+                if flag in _FLAG_LABELS
+            ]
+            if labels:
+                languages[int(match.group(1))] = tuple(dict.fromkeys(labels))
+        return languages
 
     def __extract_episode_count(self):
         """

@@ -13,7 +13,7 @@ from flask import (
 )
 
 from ...config import ANIWORLD_CONFIG_DIR, LANG_LABELS
-from .. import paths, settings_store, sitesearch, theming
+from .. import settings_store, sitesearch, theming
 from ..media import WORKING_PROVIDERS
 
 bp = Blueprint("pages", __name__)
@@ -90,9 +90,7 @@ def library():
 def autosync():
     if not settings_store.autosync_enabled():
         abort(404)
-    return render_template(
-        "autosync.html", lang_separation=paths.lang_separation_enabled()
-    )
+    return render_template("autosync.html")
 
 
 @bp.route("/settings")

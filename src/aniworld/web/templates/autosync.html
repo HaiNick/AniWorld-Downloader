@@ -13,45 +13,24 @@
     <h2 data-i18n="autosync.how_title">How it works</h2>
     <ol class="explainer">
       <li data-i18n="autosync.how_1">
-        On the schedule you set (once a day unless you change it) it pulls the newest episodes list from aniworld.to.
+        Tick "Sync this with Auto-Sync" in the download dialog of a series. It syncs in the language and into the
+        download folder picked there.
       </li>
       <li data-i18n="autosync.how_2">
-        For every new episode it checks whether you already have a folder for that title in your library.
+        Pick the episode it starts at. Nothing before it is ever queued, so gaps you leave on purpose stay gaps.
       </li>
       <li data-i18n="autosync.how_3">
-        On a match it works out which language your existing files are in, from the language folder if you separate
-        languages, otherwise by reading the audio and subtitle tracks of one file.
+        Pick when it is checked: on the Auto-Sync schedule from the settings, every day, or once a week, each at a
+        time of your choosing.
       </li>
-      <li data-i18n="autosync.how_4" id="howFill">
-        If the new episode is out in that language, every episode of the series you are still missing gets queued,
-        into the same folder the rest of the series already lives in.
-      </li>
-      <li data-i18n="autosync.how_4_new_only" id="howNewOnly" hidden>
-        If the new episode is out in that language, it gets queued into the same folder the rest of the series
-        already lives in. Older episodes you are missing are left alone, because "only the new episodes" is on
-        in the settings.
+      <li data-i18n="autosync.how_4">
+        A check reads the series page and queues every episode from the start point on that is out in that language
+        and not in the folder yet.
       </li>
     </ol>
     <p class="hint" data-i18n="autosync.how_note">
-      There is no list of titles to maintain. Your library is the list, and anything you exclude below is skipped.
-      Only aniworld.to titles are covered, since the newest-episodes list is specific to that site.
+      Only series you ticked are synced. aniworld.to and SerienStream titles can be synced.
     </p>
-
-    {# Only worth saying when the setting that solves it is off. #}
-    {% if not lang_separation %}
-    <div class="notice">
-      <span data-i18n="autosync.mixed_languages">
-        Keep one language per folder. Without language separation, Auto-Sync works out a title's language by reading
-        a single file, the first episode it finds, and treats the whole title as that language. If a folder holds
-        episodes in more than one language, the other languages are invisible to it and never get new episodes.
-      </span>
-      <div class="notice-line">
-        <a href="{{ url_for('pages.settings') }}#downloads" data-i18n="autosync.turn_on_separation">
-          Turn on "Separate languages into their own folders" in the settings
-        </a>
-      </div>
-    </div>
-    {% endif %}
   </section>
 
   <section class="card">
@@ -78,29 +57,12 @@
   </section>
 
   <section class="card">
-    <h2 data-i18n="autosync.excluded_title">Excluded titles</h2>
-    <p class="hint" data-i18n="autosync.excluded_hint">
-      Excluded titles are never queued by Auto-Sync, even if you have them in your library. You can also tick
-      "Exclude from Auto-Sync" in the download dialog of any title.
+    <h2 data-i18n="autosync.synced_title">Synced series</h2>
+    <p class="hint" data-i18n="autosync.synced_hint">
+      Changes here are saved right away. To add a series, open it from the search and tick "Sync this with
+      Auto-Sync" in its download dialog.
     </p>
-
-    <div class="inline-form">
-      <input type="text" id="excludeSearch" placeholder="Search a title to exclude..."
-        data-i18n-placeholder="autosync.search_placeholder" />
-      <button class="btn btn-primary" id="excludeSearchBtn" data-i18n="index.search">Search</button>
-    </div>
-    <div id="excludeResults" class="exclude-results"></div>
-
-    <table class="data-table stacked-table">
-      <thead>
-        <tr>
-          <th data-i18n="autosync.title_column">Title</th>
-          <th data-i18n="autosync.url_column">URL</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="exclusionsBody"></tbody>
-    </table>
+    <div id="syncedList" class="synced-list"></div>
   </section>
 </div>
 {% endblock %}

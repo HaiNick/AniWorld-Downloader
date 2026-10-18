@@ -1,17 +1,21 @@
-/* Auto-Sync page: status, last report and the exclusion list. */
+/* Auto-Sync page: status, last report and the synced series. */
 
 (function () {
   const el = (id) => document.getElementById(id);
 
   const syncNowBtn = el("syncNowBtn");
-  const exclusionsBody = el("exclusionsBody");
-  let excludedUrls = new Set();
+  const syncedList = el("syncedList");
 
   // While a run is going, poll often enough to feel live
   const IDLE_POLL = 30000;
   const RUNNING_POLL = 3000;
 
+  const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
   let timer = null;
+  // Rebuilding the list while someone types into it would eat the input
+  let editing = false;
 
   const STATUS_CLASS = {
     queued: "status-completed",
@@ -44,6 +48,17 @@
     timer = setTimeout(load, running ? RUNNING_POLL : IDLE_POLL);
   }
 
+  function resultDetail(row) {
+    if (row.reason) return esc(row.reason);
+    if (row.episodes) {
+      return t("autosync.queued_episodes", "{count} episodes queued in {language}", {
+        count: row.episodes,
+        language: row.language || ""
+      });
+    }
+    return esc(row.language || "");
+  }
+
   function renderReport(report) {
     const container = el("syncReport");
     if (!report) {
@@ -57,22 +72,12 @@
 
     const rows = report.results || [];
     if (!rows.length) {
-      container.innerHTML = `<div class="empty-state">${t("autosync.no_matches", "No titles from the newest episodes matched your library.")}</div>`;
+      container.innerHTML = `<div class="empty-state">${t("autosync.nothing_checked", "There was nothing to check.")}</div>`;
       return;
     }
 
     container.innerHTML = rows
       .map((row) => {
-        const detail = row.reason
-          ? esc(row.reason)
-          : row.episodes
-            ? t("autosync.queued_episodes", "{count} episodes queued in {language}", {
-              count: row.episodes,
-              language: row.language || ""
-            })
-            : esc(row.language || "");
-        // A show held twice produces one row per copy, so each has to say which
-        // library and language folder it is talking about.
         const where = row.where
           ? `<span class="sync-row-where">${esc(row.where)}</span>`
           : "";
@@ -80,9 +85,90 @@
           <div class="sync-row">
             <div class="sync-row-main">
               <span class="sync-row-title">${esc(row.title)}${where}</span>
-              <span class="sync-row-detail">${detail}</span>
+              <span class="sync-row-detail">${resultDetail(row)}</span>
             </div>
             <span class="status-pill ${STATUS_CLASS[row.status] || "status-queued"}">${esc(statusLabel(row.status))}</span>
+          </div>`;
+      })
+      .join("");
+  }
+
+  /* ===== Synced series ===== */
+  function weekdayOptions(selected) {
+    return WEEKDAYS.map(
+      (day, index) =>
+        `<option value="${index}" ${index === selected ? "selected" : ""}>${esc(t(`settings.day_${day}`, WEEKDAY_NAMES[index]))}</option>`
+    ).join("");
+  }
+
+  function cadenceOptions(selected) {
+    return [
+      ["global", t("autosync.cadence_global", "On the Auto-Sync schedule")],
+      ["daily", t("autosync.cadence_daily", "Every day")],
+      ["weekly", t("autosync.cadence_weekly", "Every week")]
+    ]
+      .map(
+        ([value, label]) =>
+          `<option value="${value}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`
+      )
+      .join("");
+  }
+
+  function renderSeries(rows, running) {
+    if (editing) return;
+    if (!rows.length) {
+      syncedList.innerHTML = `<div class="empty-state">${t("autosync.no_series", "No series are synced yet. Tick \"Sync this with Auto-Sync\" in the download dialog of a series.")}</div>`;
+      return;
+    }
+
+    syncedList.innerHTML = rows
+      .map((row) => {
+        const result = row.last_result;
+        const resultHtml = result
+          ? `<span class="status-pill ${STATUS_CLASS[result.status] || "status-queued"}">${esc(statusLabel(result.status))}</span> ${resultDetail(result)}`
+          : "-";
+        return `
+          <div class="synced-series" data-id="${row.id}">
+            <div class="synced-series-head">
+              <div>
+                <div class="synced-series-title">
+                  <a href="${esc(row.series_url)}" target="_blank" rel="noopener noreferrer">${esc(row.title || row.series_url)}</a>
+                </div>
+                <div class="synced-series-meta">${esc(row.language)} &middot; ${esc(row.where)}</div>
+              </div>
+              <div class="synced-series-actions">
+                <button class="btn btn-ghost btn-small" data-run="${row.id}" ${running ? "disabled" : ""}>${t("autosync.check_now", "Check now")}</button>
+                <button class="btn btn-danger btn-small" data-remove="${row.id}">${t("common.remove", "Remove")}</button>
+              </div>
+            </div>
+            <div class="control-row">
+              <label class="field field-compact">
+                <span class="field-label">${t("index.autosync_start_season", "Start at season")}</span>
+                <input type="number" min="0" step="1" data-field="start_season" value="${row.start_season}" />
+              </label>
+              <label class="field field-compact">
+                <span class="field-label">${t("index.autosync_start_episode", "Episode")}</span>
+                <input type="number" min="1" step="1" data-field="start_episode" value="${row.start_episode}" />
+              </label>
+              <label class="field">
+                <span class="field-label">${t("index.autosync_cadence", "Check it")}</span>
+                <select data-field="cadence">${cadenceOptions(row.cadence)}</select>
+              </label>
+              <label class="field" ${row.cadence === "weekly" ? "" : "hidden"}>
+                <span class="field-label">${t("index.autosync_weekday", "On")}</span>
+                <select data-field="weekday">${weekdayOptions(row.weekday)}</select>
+              </label>
+              <label class="field field-compact" ${row.cadence === "global" ? "hidden" : ""}>
+                <span class="field-label">${t("index.autosync_time", "At")}</span>
+                <input type="time" data-field="run_time" value="${esc(row.run_time)}" />
+              </label>
+            </div>
+            <div class="synced-series-status">
+              <span>${t("autosync.schedule", "Schedule")}: ${esc(row.schedule || "-")}</span>
+              <span>${t("autosync.next_run", "Next run")}: ${esc(formatTime(row.next_run))}</span>
+              <span>${t("autosync.last_checked", "Last checked")}: ${esc(formatTime(row.last_checked))}</span>
+              <span>${resultHtml}</span>
+            </div>
           </div>`;
       })
       .join("");
@@ -96,10 +182,6 @@
       schedule(false);
       return;
     }
-
-    // Step 4 of "How it works" describes two different things
-    el("howFill").hidden = Boolean(data.new_only);
-    el("howNewOnly").hidden = !data.new_only;
 
     el("scheduleValue").textContent = data.schedule || "-";
     el("lastRun").textContent = formatTime(data.last_run);
@@ -116,6 +198,7 @@
       : "-";
 
     renderReport(report);
+    renderSeries(data.series || [], data.running);
 
     syncNowBtn.disabled = Boolean(data.running);
     syncNowBtn.textContent = data.running
@@ -125,133 +208,77 @@
     schedule(data.running);
   }
 
+  async function startRun(url) {
+    await apiSend(url, "POST");
+    showToast(t("autosync.started", "Sync started"));
+    schedule(true);
+    load();
+  }
+
   syncNowBtn.addEventListener("click", async () => {
     syncNowBtn.disabled = true;
     try {
-      await apiSend("/api/autosync/run", "POST");
-      showToast(t("autosync.started", "Sync started"));
-      schedule(true);
-      load();
+      await startRun("/api/autosync/run");
     } catch (error) {
       showToast(error.message);
       syncNowBtn.disabled = false;
     }
   });
 
-  /* ===== Exclusions ===== */
-  async function loadExclusions() {
-    let data;
-    try {
-      data = await apiFetch("/api/autosync/exclusions");
-    } catch (error) {
-      showToast(error.message);
-      return;
-    }
-
-    const rows = data.exclusions || [];
-    excludedUrls = new Set(rows.map((row) => row.series_url));
-    if (!rows.length) {
-      exclusionsBody.innerHTML = `<tr class="empty-row"><td colspan="3">${t("autosync.no_exclusions", "Nothing excluded.")}</td></tr>`;
-      return;
-    }
-
-    exclusionsBody.innerHTML = rows
-      .map(
-        (row) => `
-        <tr>
-          <td>${esc(row.title || "-")}</td>
-          <td><a href="${esc(row.series_url)}" target="_blank" rel="noopener noreferrer">${esc(row.series_url)}</a></td>
-          <td>
-            <button class="btn btn-danger" data-remove="${row.id}">${t("common.remove", "Remove")}</button>
-          </td>
-        </tr>`
-      )
-      .join("");
-  }
-
-  /* ===== Adding an exclusion =====
-     Auto-Sync keys exclusions by series URL, so titles are looked up through
-     the normal aniworld search to get one. */
-  const searchInput = el("excludeSearch");
-  const searchBtn = el("excludeSearchBtn");
-  const searchResults = el("excludeResults");
-
-  async function searchTitles() {
-    const keyword = searchInput.value.trim();
-    if (!keyword) return;
-
-    searchBtn.disabled = true;
-    searchResults.innerHTML = `<div class="empty-state">${t("common.loading", "Loading...")}</div>`;
-    try {
-      const data = await apiSend("/api/search", "POST", {
-        keyword,
-        site: "aniworld"
-      });
-      renderSearchResults(data.results || []);
-    } catch (error) {
-      searchResults.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
-    } finally {
-      searchBtn.disabled = false;
-    }
-  }
-
-  function renderSearchResults(results) {
-    if (!results.length) {
-      searchResults.innerHTML = `<div class="empty-state">${t("index.no_results", "No results found.")}</div>`;
-      return;
-    }
-
-    searchResults.innerHTML = results
-      .slice(0, 12)
-      .map((item) => {
-        const already = excludedUrls.has(item.url);
-        const title = decodeEntities(item.title);
-        return `
-          <div class="exclude-result">
-            <span class="exclude-result-title" title="${esc(title)}">${esc(title)}</span>
-            <button class="btn btn-ghost" data-add-url="${esc(item.url)}"
-              data-add-title="${esc(title)}" ${already ? "disabled" : ""}>
-              ${already ? t("autosync.already_excluded", "Excluded") : t("autosync.exclude", "Exclude")}
-            </button>
-          </div>`;
-      })
-      .join("");
-  }
-
-  searchBtn.addEventListener("click", searchTitles);
-  searchInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") searchTitles();
+  syncedList.addEventListener("focusin", () => {
+    editing = true;
+  });
+  syncedList.addEventListener("focusout", (event) => {
+    if (!syncedList.contains(event.relatedTarget)) editing = false;
   });
 
-  searchResults.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-add-url]");
-    if (!button) return;
-    button.disabled = true;
+  syncedList.addEventListener("change", async (event) => {
+    const input = event.target.closest("[data-field]");
+    if (!input) return;
+    const card = input.closest("[data-id]");
+    const field = input.dataset.field;
+    const value = input.type === "number" || field === "weekday" ? Number(input.value) : input.value;
+
+    // The day only matters weekly and the time only with a preset
+    if (field === "cadence") {
+      card.querySelector('[data-field="weekday"]').closest(".field").hidden = value !== "weekly";
+      card.querySelector('[data-field="run_time"]').closest(".field").hidden = value === "global";
+    }
+
     try {
-      await apiSend("/api/autosync/exclusions", "POST", {
-        series_url: button.dataset.addUrl,
-        title: button.dataset.addTitle
-      });
-      showToast(t("autosync.added", "Excluded from Auto-Sync"));
-      button.textContent = t("autosync.already_excluded", "Excluded");
-      await loadExclusions();
+      await apiSend(`/api/autosync/series/${card.dataset.id}`, "PUT", { [field]: value });
+      showToast(t("settings.saved", "Saved"));
     } catch (error) {
       showToast(error.message);
-      button.disabled = false;
     }
+    editing = false;
+    load();
   });
 
-  exclusionsBody.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-remove]");
-    if (!button) return;
+  syncedList.addEventListener("click", async (event) => {
+    const run = event.target.closest("[data-run]");
+    if (run) {
+      run.disabled = true;
+      try {
+        await startRun(`/api/autosync/series/${run.dataset.run}/run`);
+      } catch (error) {
+        showToast(error.message);
+        run.disabled = false;
+      }
+      return;
+    }
+
+    const remove = event.target.closest("[data-remove]");
+    if (!remove) return;
     try {
-      await apiSend(`/api/autosync/exclusions/${button.dataset.remove}`, "DELETE");
-      loadExclusions();
+      await apiSend(`/api/autosync/series/${remove.dataset.remove}`, "DELETE");
+      showToast(t("index.autosync_untracked", "No longer synced by Auto-Sync"));
+      editing = false;
+      load();
     } catch (error) {
       showToast(error.message);
     }
   });
 
   load();
-  loadExclusions();
 })();

@@ -569,6 +569,7 @@ input[type="text"],
 input[type="password"],
 input[type="search"],
 input[type="number"],
+input[type="time"],
 select {
   padding: 10px 14px;
   border-radius: var(--radius-sm);
@@ -2862,33 +2863,89 @@ details.advanced summary:hover {
   flex-shrink: 0;
 }
 
-.exclude-results {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.exclude-results:empty {
-  display: none;
-}
-
-.exclude-result {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+/* Auto-Sync: the "Sync this" box in the download modal and the list of
+   synced series on the Auto-Sync page share the same controls */
+.autosync-box {
+  margin-top: 14px;
+  padding: 2px 12px 12px;
   background: var(--surface-strong);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-xs);
-  padding: 8px 12px;
 }
 
-.exclude-result-title {
-  font-size: 0.85rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.autosync-box .checkbox {
+  margin-top: 10px;
+}
+
+.autosync-box .field,
+.synced-series .field {
+  min-width: 110px;
+}
+
+.autosync-box .hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 0.76rem;
+}
+
+.synced-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.synced-series {
+  background: var(--surface-strong);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  padding: 12px 14px;
+}
+
+.synced-series-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.synced-series-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.synced-series-title a {
+  color: inherit;
+}
+
+.synced-series-meta {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.synced-series-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.synced-series-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
 }
 
 .update-available-badge {
