@@ -2864,35 +2864,71 @@ details.advanced summary:hover {
 }
 
 /* Auto-Sync: the "Sync this" box in the download modal and the list of
-   synced series on the Auto-Sync page share the same controls */
+   synced series on the Auto-Sync page. Both are built like a season in the
+   episode list: a header bar over a bordered body, with compact fields the
+   size of the schedule ones in the settings */
+.autosync-box,
+.synced-series {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
 .autosync-box {
   margin-top: 14px;
-  padding: 2px 12px 12px;
+}
+
+.autosync-box > .checkbox {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  font-weight: 600;
+  color: var(--text-bright);
+  transition: background 0.2s;
+}
+
+.autosync-box > .checkbox:hover {
   background: var(--surface-strong);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-xs);
 }
 
-.autosync-box .checkbox {
-  margin-top: 10px;
+.autosync-options,
+.synced-series-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border-soft);
 }
 
-.autosync-box .field,
-.synced-series .field {
-  min-width: 110px;
+.autosync-options[hidden] {
+  display: none;
 }
 
-.autosync-box .hint {
+.sync-fields .field {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.sync-fields input[type="number"] {
+  width: 96px;
+}
+
+.sync-fields input[type="time"] {
+  width: 120px;
+}
+
+.sync-fields select {
+  width: 132px;
+}
+
+.sync-fields select[data-field="cadence"],
+.sync-fields #autosyncCadence {
+  width: 260px;
+}
+
+.autosync-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.btn-small {
-  padding: 4px 10px;
-  font-size: 0.76rem;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .synced-list {
@@ -2902,29 +2938,33 @@ details.advanced summary:hover {
   margin-top: 14px;
 }
 
-.synced-series {
-  background: var(--surface-strong);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-xs);
-  padding: 12px 14px;
-}
-
 .synced-series-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--surface);
+}
+
+.synced-series-head > div:first-child {
+  min-width: 0;
 }
 
 .synced-series-title {
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   font-weight: 600;
+  color: var(--text-bright);
   overflow-wrap: anywhere;
 }
 
 .synced-series-title a {
   color: inherit;
+}
+
+.synced-series-title a:hover {
+  color: var(--link-hover);
 }
 
 .synced-series-meta {
@@ -2935,17 +2975,36 @@ details.advanced summary:hover {
 
 .synced-series-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* Same size as the Remove button next to it */
+.synced-series-actions .btn-ghost {
+  padding: 6px 12px;
+  font-size: 0.8rem;
 }
 
 .synced-series-status {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-top: 10px;
+  align-items: center;
+  gap: 6px 18px;
+  margin-top: 14px;
   font-size: 0.76rem;
   color: var(--text-muted);
+}
+
+.synced-series-status strong {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.synced-series-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .update-available-badge {
