@@ -1,10 +1,11 @@
 """Search, browse and the series/season/episode endpoints."""
 
+import json
 import re
 import time
 from types import SimpleNamespace
 
-from flask import Response, jsonify, request
+from flask import Response, jsonify, request, stream_with_context
 from niquests.exceptions import HTTPError, RequestException
 
 from ...config import DEFAULT_USER_AGENT, GLOBAL_SESSION
@@ -63,6 +64,7 @@ def _build_kwargs(provider):
 
 def register(bp):
     bp.add_url_rule("/search", view_func=search, methods=["POST"])
+    bp.add_url_rule("/search/stream", view_func=search_stream, methods=["POST"])
     bp.add_url_rule("/series", view_func=series)
     bp.add_url_rule("/seasons", view_func=seasons)
     bp.add_url_rule("/episodes", view_func=episodes)
@@ -91,19 +93,11 @@ def search():
         return jsonify({"error": "keyword is required"}), 400
 
     if site == "all":
-        media_type = (data.get("type") or "all").strip()
-        if media_type not in sitesearch.SEARCH_TYPES:
-            allowed = ", ".join(sitesearch.SEARCH_TYPES)
-            return jsonify({"error": f"type must be one of {allowed}"}), 400
+        media_type, error = _search_type(data)
+        if error:
+            return error
         results = [
-            {
-                "title": item["title"],
-                "url": item["url"],
-                "site": item["site"],
-                "type": item["type"],
-                "poster_url": media.proxy_image(item["poster"]),
-            }
-            for item in sitesearch.search_all(keyword, media_type)
+            _typed_hit(item) for item in sitesearch.search_all(keyword, media_type)
         ]
     elif site == "htv":
         results = _search_hanime(keyword)
@@ -117,6 +111,52 @@ def search():
             for item in sitesearch.search(site, keyword)
         ]
     return jsonify({"results": results})
+
+
+def _search_type(data):
+    media_type = (data.get("type") or "all").strip()
+    if media_type not in sitesearch.SEARCH_TYPES:
+        allowed = ", ".join(sitesearch.SEARCH_TYPES)
+        return None, (jsonify({"error": f"type must be one of {allowed}"}), 400)
+    return media_type, None
+
+
+def _typed_hit(item):
+    return {
+        "title": item["title"],
+        "url": item["url"],
+        "site": item["site"],
+        "type": item["type"],
+        "poster_url": media.proxy_image(item["poster"]),
+    }
+
+
+def search_stream():
+    """Every site at once like site "all", sent site by site as they answer.
+
+    One JSON object per line: {site, results, pending}, then {"done": true}.
+    A slow site no longer holds up the results of the quick ones.
+    """
+    data = request.get_json(silent=True) or {}
+    keyword = (data.get("keyword") or "").strip()
+    if not keyword:
+        return jsonify({"error": "keyword is required"}), 400
+    media_type, error = _search_type(data)
+    if error:
+        return error
+
+    def lines():
+        for event in sitesearch.search_stream(keyword, media_type):
+            event["results"] = [_typed_hit(item) for item in event["results"]]
+            yield json.dumps(event) + "\n"
+        yield json.dumps({"done": True}) + "\n"
+
+    return Response(
+        stream_with_context(lines()),
+        mimetype="application/x-ndjson",
+        # A buffering proxy in front would undo the point of streaming
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _search_hanime(keyword):

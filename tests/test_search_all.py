@@ -211,3 +211,80 @@ def test_one_site_searches_still_work(client, sites):
     sites["sto"] = ["Dark"]
     response = client.post("/api/search", json={"keyword": "x", "site": "sto"})
     assert [r["title"] for r in response.get_json()["results"]] == ["Dark"]
+
+
+# ---------------------------------------------------------------------------
+# search_stream: one event per site, as soon as that site answers
+# ---------------------------------------------------------------------------
+def test_each_site_arrives_on_its_own(sites):
+    sites["aniworld"] = ["Naruto"]
+    sites["sto"] = ["Dark"]
+    sites["megakino"] = ["Dune"]
+    events = list(sitesearch.search_stream("x"))
+    assert [e["site"] for e in events][:2] == ["aniworld", "sto"]
+    assert {e["site"] for e in events} == {"aniworld", "sto", *sitesearch.MOVIE_SITES}
+    assert events[-1]["pending"] == []
+    found_by_site = {e["site"]: found(e["results"]) for e in events}
+    assert found_by_site["megakino"] == [("Dune", "megakino", "movie")]
+
+
+def test_a_slow_site_comes_last_and_does_not_hold_up_the_rest(monkeypatch):
+    release = threading.Event()
+
+    def fake_search(site, keyword):
+        if site == "moflix":
+            release.wait(5)
+            return [hit("Late Movie", site)]
+        return [hit("Quick Movie", site)] if site == "megakino" else []
+
+    monkeypatch.setattr(sitesearch, "search", fake_search)
+    stream = sitesearch.search_stream("x", "movie")
+    first = [next(stream) for _ in range(len(sitesearch.MOVIE_SITES) - 1)]
+    assert "moflix" not in [e["site"] for e in first]
+    assert first[-1]["pending"] == ["moflix"]
+    release.set()
+    last = next(stream)
+    assert found(last["results"]) == [("Late Movie", "moflix", "movie")]
+    assert last["pending"] == []
+
+
+def test_a_site_that_times_out_is_reported_empty(monkeypatch):
+    release = threading.Event()
+
+    def fake_search(site, keyword):
+        if site == "filmo":
+            release.wait(5)
+        return []
+
+    monkeypatch.setattr(sitesearch, "search", fake_search)
+    try:
+        events = list(sitesearch.search_stream("x", "movie", timeout=0.2))
+    finally:
+        release.set()
+    late = [e for e in events if e.get("timed_out")]
+    assert [e["site"] for e in late] == ["filmo"]
+    assert late[0]["results"] == []
+
+
+def test_the_stream_api_sends_one_line_per_site(client, sites):
+    import json
+
+    sites["aniworld"] = ["Naruto"]
+    sites["sto"] = ["Dark"]
+    response = client.post(
+        "/api/search/stream", json={"keyword": "x", "type": "series"}
+    )
+    assert response.status_code == 200
+    assert response.mimetype == "application/x-ndjson"
+    lines = [json.loads(line) for line in response.get_data(as_text=True).splitlines()]
+    assert lines[-1] == {"done": True}
+    assert [(r["title"], r["type"]) for r in lines[0]["results"]] == [
+        ("Dark", "series")
+    ]
+    assert set(lines[0]["results"][0]) == {"title", "url", "site", "type", "poster_url"}
+
+
+def test_the_stream_api_rejects_an_unknown_type(client, sites):
+    response = client.post("/api/search/stream", json={"keyword": "x", "type": "manga"})
+    assert response.status_code == 400
+    assert sites["asked"] == []

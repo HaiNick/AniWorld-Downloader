@@ -377,6 +377,9 @@
       "settings.api_search":
         'Auf einer Seite suchen, Body: keyword, site. site "all" durchsucht alle Seiten auf einmal, ' +
         "AniWorld zuerst; dazu type: all, anime, series oder movie",
+      "settings.api_search_stream":
+        'Wie site "all", aber eine JSON-Zeile je Seite, sobald sie antwortet, danach {"done": true}. ' +
+        "Body: keyword, type",
       "settings.api_series": "Titel, Poster, Beschreibung und Genres",
       "settings.api_seasons": "Staffeln; MangaFire-Kapitel oder -Bände je nach mangafire_format",
       "settings.api_episodes": "Episoden einer Staffel, mit Sprachen",

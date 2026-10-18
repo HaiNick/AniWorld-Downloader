@@ -8,7 +8,7 @@ come back.
 import html
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FutureTimeout
 
 from ..logger import get_logger
@@ -236,34 +236,17 @@ ANIME_SITE = "aniworld"
 SERIES_SITE = "sto"
 SERIES_FALLBACK_SITES = ("burningseries", "kinox", "moflix")
 
-# Seconds each site gets. They all start together, so one slow site costs at
-# most this long instead of holding up every site after it.
+# Seconds each site gets from its own start. They all run at the same time, so
+# one slow site costs at most this long instead of holding up the others.
 SITE_TIMEOUT = 10
 
-
-def _search_sites(sites, keyword, timeout):
-    """Search several sites in parallel, as {site: results}.
-
-    A site that misses the timeout counts as empty; its thread is left to
-    finish on its own.
-    """
-    sites = list(dict.fromkeys(sites))
-    if not sites:
-        return {}
-
-    pool = ThreadPoolExecutor(max_workers=len(sites), thread_name_prefix="search")
-    futures = {site: pool.submit(search, site, keyword) for site in sites}
-    pool.shutdown(wait=False)
-
-    deadline = time.monotonic() + timeout
-    hits = {}
-    for site, future in futures.items():
-        try:
-            hits[site] = future.result(timeout=max(0, deadline - time.monotonic()))
-        except FutureTimeout:
-            logger.warning("Search on %s timed out for '%s'", site, keyword)
-            hits[site] = []
-    return hits
+_TYPE_ORDER = {"anime": 0, "series": 1, "movie": 2}
+_SITE_ORDER = {
+    site: index
+    for index, site in enumerate(
+        (ANIME_SITE, SERIES_SITE, *SERIES_FALLBACK_SITES, *MOVIE_SITES)
+    )
+}
 
 
 def _same_title(a, b):
@@ -275,59 +258,133 @@ def _is_anime(item, anime):
     return any(_same_title(item["title"], hit["title"]) for hit in anime)
 
 
-def search_all(keyword, media_type="all", timeout=SITE_TIMEOUT):
-    """Search across sites with the anime/series/movie priority rules.
+def search_stream(keyword, media_type="all", timeout=SITE_TIMEOUT):
+    """Search across sites with the anime/series/movie priority rules, site by site.
 
-    Returns [{title, url, poster, site, type}], anime first, then series, then
-    movies. A link only appears once, under the first type that claimed it.
+    Yields one {"site", "results", "pending"} per site as soon as that site has
+    answered, so a slow site no longer holds up the rest. "results" are
+    [{title, url, poster, site, type}]; "pending" lists the sites still running.
+    A site that misses its timeout yields once with no results and
+    "timed_out": True.
+
+    aniworld and s.to come first, because they decide the rest: what aniworld
+    has is anime, so its copies elsewhere are dropped, and the other series
+    sites are only asked when s.to has nothing. Both answer quickly; the movie
+    sites already run in the meantime. A link is only listed once, under the
+    first type that claimed it.
     """
     want_anime = media_type in ("all", "anime")
     want_series = media_type in ("all", "series")
     want_movies = media_type in ("all", "movie")
+    shows = want_anime or want_series
 
-    sites = []
-    if want_anime or want_series:
-        # Series need aniworld too, to know which s.to hits are really anime
-        sites += [ANIME_SITE, SERIES_SITE]
-    if want_movies:
-        sites += MOVIE_SITES
-    hits = _search_sites(sites, keyword, timeout)
+    pool = ThreadPoolExecutor(max_workers=len(_SITE_ORDER), thread_name_prefix="search")
+    running = {}  # site -> (future, started)
 
-    anime = hits.get(ANIME_SITE, [])
-    results = []
-    if want_anime:
-        results += [{**item, "site": ANIME_SITE, "type": "anime"} for item in anime]
+    def start(site):
+        if site not in running:
+            running[site] = (pool.submit(search, site, keyword), time.monotonic())
 
-    if want_series:
-        series = [{**item, "site": SERIES_SITE} for item in hits.get(SERIES_SITE, [])]
-        if not series:
-            # Reuse any site the movie search already asked, kinox and moflix
-            # carry both
-            missing = [site for site in SERIES_FALLBACK_SITES if site not in hits]
-            hits.update(_search_sites(missing, keyword, timeout))
-            series = [
-                {**item, "site": site}
-                for site in SERIES_FALLBACK_SITES
-                for item in hits.get(site, [])
-            ]
-        results += [
-            {**item, "type": "series"} for item in series if not _is_anime(item, anime)
-        ]
-
-    if want_movies:
-        # kinox and moflix list anime series too; with aniworld asked as well
-        # (type "all"), those belong to the anime above, not here
-        results += [
-            {**item, "site": site, "type": "movie"}
-            for site in MOVIE_SITES
-            for item in hits.get(site, [])
-            if not _is_anime(item, anime)
-        ]
+    def answer(site):
+        future, started = running[site]
+        try:
+            return future.result(
+                timeout=max(0, started + timeout - time.monotonic())
+            ), False
+        except FutureTimeout:
+            logger.warning("Search on %s timed out for '%s'", site, keyword)
+            return [], True
 
     seen = set()
-    unique = []
-    for item in results:
-        if item["url"] not in seen:
+    done = set()
+    anime = []
+
+    def event(site, kind, items, timed_out=False):
+        done.add(site)
+        results = []
+        for item in items:
+            if item["url"] in seen or (kind != "anime" and _is_anime(item, anime)):
+                continue
             seen.add(item["url"])
-            unique.append(item)
-    return unique
+            results.append({**item, "site": site, "type": kind})
+        reply = {
+            "site": site,
+            "results": results,
+            "pending": [s for s in running if s not in done],
+        }
+        if timed_out:
+            reply["timed_out"] = True
+        return reply
+
+    try:
+        if shows:
+            # Series need aniworld too, to know which s.to hits are really anime
+            start(ANIME_SITE)
+            start(SERIES_SITE)
+        if want_movies:
+            for site in MOVIE_SITES:
+                start(site)
+
+        series_sites = ()
+        if shows:
+            anime, late = answer(ANIME_SITE)
+            if want_anime:
+                yield event(ANIME_SITE, "anime", anime, late)
+            else:
+                done.add(ANIME_SITE)
+
+            series, late = answer(SERIES_SITE)
+            if want_series and series:
+                yield event(SERIES_SITE, "series", series, late)
+            else:
+                done.add(SERIES_SITE)
+                if want_series:
+                    # kinox and moflix may already run for the movies; that
+                    # search is reused, and its hits count as series then
+                    series_sites = SERIES_FALLBACK_SITES
+                    for site in series_sites:
+                        start(site)
+
+        while True:
+            waiting = {
+                future: site
+                for site, (future, _) in running.items()
+                if site not in done
+            }
+            if not waiting:
+                break
+
+            # Wake for whichever comes first: an answer or the next deadline
+            next_deadline = min(running[site][1] + timeout for site in waiting.values())
+            finished, _ = wait(
+                waiting,
+                timeout=max(0, next_deadline - time.monotonic()),
+                return_when=FIRST_COMPLETED,
+            )
+            now = time.monotonic()
+            for future, site in waiting.items():
+                if future in finished or now >= running[site][1] + timeout:
+                    items, late = answer(site)
+                    kind = "series" if site in series_sites else "movie"
+                    yield event(site, kind, items, late)
+    finally:
+        # Late sites finish on their own; nothing waits for them
+        pool.shutdown(wait=False)
+
+
+def search_all(keyword, media_type="all", timeout=SITE_TIMEOUT):
+    """Search across sites with the anime/series/movie priority rules.
+
+    The same as search_stream(), collected: [{title, url, poster, site, type}],
+    anime first, then series, then movies, each in site order.
+    """
+    results = [
+        item
+        for event in search_stream(keyword, media_type, timeout)
+        for item in event["results"]
+    ]
+    # Stable, so each site keeps its own ranking
+    results.sort(
+        key=lambda item: (_TYPE_ORDER[item["type"]], _SITE_ORDER[item["site"]])
+    )
+    return results

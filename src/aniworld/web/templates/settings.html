@@ -655,6 +655,12 @@
                       every site at once, aniworld first; add type: all, anime, series or movie</td>
                   </tr>
                   <tr>
+                    <td><code>POST /api/search/stream</code></td>
+                    <td>read</td>
+                    <td data-i18n="settings.api_search_stream">Like site "all", but one JSON line per site as it
+                      answers, then {"done": true}. Body: keyword, type</td>
+                  </tr>
+                  <tr>
                     <td><code>GET /api/series?url=</code></td>
                     <td>read</td>
                     <td data-i18n="settings.api_series">Title, poster, description and genres</td>

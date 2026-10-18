@@ -23,7 +23,7 @@ KEY_PREFIX = "awd_"
 SCOPES = ("read", "write", "admin")
 
 # POST endpoints that do not change anything, a read key may still use them.
-_READ_SAFE = {"api.search"}
+_READ_SAFE = {"api.search", "api.search_stream"}
 
 # Admin endpoints a write key may still use. The "Sync this" switch lets the
 # Jellyfin plugin track a series without holding a key with full access.

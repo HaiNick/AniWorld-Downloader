@@ -119,6 +119,17 @@ def test_search_stays_open_to_read_keys(client, api_key, monkeypatch):
     assert response.status_code == 200
 
 
+def test_the_search_stream_is_open_to_read_keys(client, api_key, monkeypatch):
+    from aniworld.web import sitesearch
+
+    monkeypatch.setattr(sitesearch, "search", lambda site, keyword: [])
+    raw, _ = api_key(scope="read")
+    response = client.post(
+        "/api/search/stream", json={"keyword": "naruto"}, headers=headers(raw)
+    )
+    assert response.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Write scope
 # ---------------------------------------------------------------------------
