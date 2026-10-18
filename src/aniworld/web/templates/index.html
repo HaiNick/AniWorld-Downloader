@@ -226,12 +226,12 @@
 
       {% if is_admin %}
       <div class="autosync-box" id="autosyncRow" hidden>
-        <label class="checkbox" style="margin-top:0">
+        <label class="checkbox">
           <input type="checkbox" id="autosyncTrack" />
           <span data-i18n="index.autosync_track">Sync this with Auto-Sync</span>
         </label>
-        <div id="autosyncOptions" hidden>
-          <div class="control-row">
+        <div class="autosync-options" id="autosyncOptions" hidden>
+          <div class="control-row sync-fields">
             <label class="field">
               <span class="field-label" data-i18n="index.autosync_start_season">Start at season</span>
               <input type="number" id="autosyncStartSeason" min="0" step="1" value="1" />
@@ -240,8 +240,6 @@
               <span class="field-label" data-i18n="index.autosync_start_episode">Episode</span>
               <input type="number" id="autosyncStartEpisode" min="1" step="1" value="1" />
             </label>
-          </div>
-          <div class="control-row">
             <label class="field">
               <span class="field-label" data-i18n="index.autosync_cadence">Check it</span>
               <select id="autosyncCadence">
@@ -259,9 +257,9 @@
               <input type="time" id="autosyncTime" value="22:00" />
             </label>
           </div>
-          <p class="hint">
+          <p class="hint autosync-summary">
             <span id="autosyncSummary"></span>
-            <button class="btn btn-ghost btn-small" id="autosyncUseCurrent" type="button" hidden
+            <button class="btn btn-ghost" id="autosyncUseCurrent" type="button" hidden
               data-i18n="index.autosync_use_current">Use the language and folder above</button>
           </p>
         </div>

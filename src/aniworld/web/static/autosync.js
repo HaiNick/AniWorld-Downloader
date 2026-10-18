@@ -125,8 +125,8 @@
       .map((row) => {
         const result = row.last_result;
         const resultHtml = result
-          ? `<span class="status-pill ${STATUS_CLASS[result.status] || "status-queued"}">${esc(statusLabel(result.status))}</span> ${resultDetail(result)}`
-          : "-";
+          ? `<span class="synced-series-result"><span class="status-pill ${STATUS_CLASS[result.status] || "status-queued"}">${esc(statusLabel(result.status))}</span> ${resultDetail(result)}</span>`
+          : "";
         return `
           <div class="synced-series" data-id="${row.id}">
             <div class="synced-series-head">
@@ -137,16 +137,17 @@
                 <div class="synced-series-meta">${esc(row.language)} &middot; ${esc(row.where)}</div>
               </div>
               <div class="synced-series-actions">
-                <button class="btn btn-ghost btn-small" data-run="${row.id}" ${running ? "disabled" : ""}>${t("autosync.check_now", "Check now")}</button>
-                <button class="btn btn-danger btn-small" data-remove="${row.id}">${t("common.remove", "Remove")}</button>
+                <button class="btn btn-ghost" data-run="${row.id}" ${running ? "disabled" : ""}>${t("autosync.check_now", "Check now")}</button>
+                <button class="btn btn-danger" data-remove="${row.id}">${t("common.remove", "Remove")}</button>
               </div>
             </div>
-            <div class="control-row">
-              <label class="field field-compact">
+            <div class="synced-series-body">
+            <div class="control-row sync-fields">
+              <label class="field">
                 <span class="field-label">${t("index.autosync_start_season", "Start at season")}</span>
                 <input type="number" min="0" step="1" data-field="start_season" value="${row.start_season}" />
               </label>
-              <label class="field field-compact">
+              <label class="field">
                 <span class="field-label">${t("index.autosync_start_episode", "Episode")}</span>
                 <input type="number" min="1" step="1" data-field="start_episode" value="${row.start_episode}" />
               </label>
@@ -158,16 +159,17 @@
                 <span class="field-label">${t("index.autosync_weekday", "On")}</span>
                 <select data-field="weekday">${weekdayOptions(row.weekday)}</select>
               </label>
-              <label class="field field-compact" ${row.cadence === "global" ? "hidden" : ""}>
+              <label class="field" ${row.cadence === "global" ? "hidden" : ""}>
                 <span class="field-label">${t("index.autosync_time", "At")}</span>
                 <input type="time" data-field="run_time" value="${esc(row.run_time)}" />
               </label>
             </div>
             <div class="synced-series-status">
-              <span>${t("autosync.schedule", "Schedule")}: ${esc(row.schedule || "-")}</span>
-              <span>${t("autosync.next_run", "Next run")}: ${esc(formatTime(row.next_run))}</span>
-              <span>${t("autosync.last_checked", "Last checked")}: ${esc(formatTime(row.last_checked))}</span>
-              <span>${resultHtml}</span>
+              <span>${t("autosync.schedule", "Schedule")}: <strong>${esc(row.schedule || "-")}</strong></span>
+              <span>${t("autosync.next_run", "Next run")}: <strong>${esc(formatTime(row.next_run))}</strong></span>
+              <span>${t("autosync.last_checked", "Last checked")}: <strong>${esc(formatTime(row.last_checked))}</strong></span>
+              ${resultHtml}
+            </div>
             </div>
           </div>`;
       })
