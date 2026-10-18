@@ -651,7 +651,8 @@
                   <tr>
                     <td><code>POST /api/search</code></td>
                     <td>read</td>
-                    <td data-i18n="settings.api_search">Search a site, body: keyword, site</td>
+                    <td data-i18n="settings.api_search">Search a site, body: keyword, site. site "all" searches
+                      every site at once, aniworld first; add type: all, anime, series or movie</td>
                   </tr>
                   <tr>
                     <td><code>GET /api/series?url=</code></td>
@@ -736,6 +737,17 @@
                     <td><code>POST /api/library/delete</code></td>
                     <td>full</td>
                     <td data-i18n="settings.api_lib_delete">Delete a title, season or episode</td>
+                  </tr>
+                  <tr>
+                    <td><code>GET /api/autosync/tracked?url=</code></td>
+                    <td>write</td>
+                    <td data-i18n="settings.api_sync_tracked">Whether Auto-Sync follows a series</td>
+                  </tr>
+                  <tr>
+                    <td><code>POST /api/autosync/tracked</code></td>
+                    <td>write</td>
+                    <td data-i18n="settings.api_sync_track">Tick or untick "Sync this with Auto-Sync", body:
+                      series_url, tracked, language</td>
                   </tr>
                   <tr>
                     <td><code>GET /api/autosync/status</code></td>

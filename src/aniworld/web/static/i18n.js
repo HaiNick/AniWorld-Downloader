@@ -374,7 +374,9 @@
       "settings.api_needs": "Benötigt",
       "settings.api_what": "Funktion",
       "settings.api_ping": "Schlüssel prüfen und Zugriffsstufe anzeigen",
-      "settings.api_search": "Auf einer Seite suchen, Body: keyword, site",
+      "settings.api_search":
+        'Auf einer Seite suchen, Body: keyword, site. site "all" durchsucht alle Seiten auf einmal, ' +
+        "AniWorld zuerst; dazu type: all, anime, series oder movie",
       "settings.api_series": "Titel, Poster, Beschreibung und Genres",
       "settings.api_seasons": "Staffeln; MangaFire-Kapitel oder -Bände je nach mangafire_format",
       "settings.api_episodes": "Episoden einer Staffel, mit Sprachen",
@@ -394,6 +396,9 @@
       "settings.api_lib_titles": "Titel in einem Ordner",
       "settings.api_lib_title": "Dateien eines einzelnen Titels",
       "settings.api_lib_delete": "Titel, Staffel oder Episode löschen",
+      "settings.api_sync_tracked": "Ob Auto-Sync eine Serie verfolgt",
+      "settings.api_sync_track":
+        '"Mit Auto-Sync synchronisieren" an- oder abhaken, Body: series_url, tracked, language',
       "settings.api_sync_status": "Letzter Lauf und dessen Bericht",
       "settings.api_sync_run": "Sync sofort starten",
       "settings.api_settings": "Aktuelle Einstellungen lesen",

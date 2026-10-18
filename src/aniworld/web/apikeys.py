@@ -17,12 +17,17 @@ HEADER = "X-API-Key"
 KEY_PREFIX = "awd_"
 
 # read  -> GET only
-# write -> everything a normal user can do (search, download, queue)
-# admin -> also settings, custom paths, auto-sync and library deletes
+# write -> everything a normal user can do (search, download, queue), plus
+#          ticking "Sync this" on a series
+# admin -> also settings, custom paths, the rest of auto-sync and library deletes
 SCOPES = ("read", "write", "admin")
 
 # POST endpoints that do not change anything, a read key may still use them.
 _READ_SAFE = {"api.search"}
+
+# Admin endpoints a write key may still use. The "Sync this" switch lets the
+# Jellyfin plugin track a series without holding a key with full access.
+_WRITE_ALLOWED = {"api.tracked_state", "api.set_tracked_state"}
 
 # Minting or revoking keys always needs a real login, never another key.
 _SESSION_ONLY = {"api.list_api_keys", "api.create_api_key", "api.delete_api_key"}
@@ -69,7 +74,11 @@ def authenticate(admin_endpoints):
         return jsonify({"error": "API keys cannot manage API keys"}), 403
 
     scope = record["scope"]
-    if scope != "admin" and request.endpoint in admin_endpoints:
+    if (
+        scope != "admin"
+        and request.endpoint in admin_endpoints
+        and not (scope == "write" and request.endpoint in _WRITE_ALLOWED)
+    ):
         return jsonify({"error": "This endpoint needs a key with full access"}), 403
     if (
         scope == "read"

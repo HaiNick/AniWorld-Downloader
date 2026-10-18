@@ -90,7 +90,22 @@ def search():
     if not keyword:
         return jsonify({"error": "keyword is required"}), 400
 
-    if site == "htv":
+    if site == "all":
+        media_type = (data.get("type") or "all").strip()
+        if media_type not in sitesearch.SEARCH_TYPES:
+            allowed = ", ".join(sitesearch.SEARCH_TYPES)
+            return jsonify({"error": f"type must be one of {allowed}"}), 400
+        results = [
+            {
+                "title": item["title"],
+                "url": item["url"],
+                "site": item["site"],
+                "type": item["type"],
+                "poster_url": media.proxy_image(item["poster"]),
+            }
+            for item in sitesearch.search_all(keyword, media_type)
+        ]
+    elif site == "htv":
         results = _search_hanime(keyword)
     else:
         results = [

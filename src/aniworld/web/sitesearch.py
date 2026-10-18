@@ -5,7 +5,11 @@ to {title, url} and filters out season/episode links so only series-level hits
 come back.
 """
 
+import html
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 
 from ..logger import get_logger
 from ..search import (
@@ -32,6 +36,7 @@ from ..search import (
     query_moflix,
     query_s_to,
 )
+from .media import folder_matches_title
 
 logger = get_logger(__name__)
 
@@ -80,7 +85,8 @@ def sites_for(media_type):
 
 def _clean_title(value, fallback=""):
     title = value or fallback or "Unknown"
-    return title.replace("<em>", "").replace("</em>", "").strip()
+    # aniworld sends "Rock Lee &amp; His Ninja Pals"; every caller escapes again
+    return html.unescape(title.replace("<em>", "").replace("</em>", "")).strip()
 
 
 def _poster(item):
@@ -216,3 +222,112 @@ def aggregate(title, media_type, per_site=8, limit=25):
             if len(combined) >= limit:
                 return combined
     return combined
+
+
+# ---------------------------------------------------------------------------
+# Searching every site at once, for the Jellyfin plugin
+#
+# aniworld only hosts anime, so a title found there is anime and the s.to copy
+# of it is dropped. Whatever s.to has beyond that is a series. The other series
+# sites are only asked when s.to has nothing at all.
+# ---------------------------------------------------------------------------
+SEARCH_TYPES = ("all", "anime", "series", "movie")
+ANIME_SITE = "aniworld"
+SERIES_SITE = "sto"
+SERIES_FALLBACK_SITES = ("burningseries", "kinox", "moflix")
+
+# Seconds each site gets. They all start together, so one slow site costs at
+# most this long instead of holding up every site after it.
+SITE_TIMEOUT = 10
+
+
+def _search_sites(sites, keyword, timeout):
+    """Search several sites in parallel, as {site: results}.
+
+    A site that misses the timeout counts as empty; its thread is left to
+    finish on its own.
+    """
+    sites = list(dict.fromkeys(sites))
+    if not sites:
+        return {}
+
+    pool = ThreadPoolExecutor(max_workers=len(sites), thread_name_prefix="search")
+    futures = {site: pool.submit(search, site, keyword) for site in sites}
+    pool.shutdown(wait=False)
+
+    deadline = time.monotonic() + timeout
+    hits = {}
+    for site, future in futures.items():
+        try:
+            hits[site] = future.result(timeout=max(0, deadline - time.monotonic()))
+        except FutureTimeout:
+            logger.warning("Search on %s timed out for '%s'", site, keyword)
+            hits[site] = []
+    return hits
+
+
+def _same_title(a, b):
+    # Either side may carry a year or an ID the other lacks, "Naruto (2002)"
+    return folder_matches_title(a, b) or folder_matches_title(b, a)
+
+
+def _is_anime(item, anime):
+    return any(_same_title(item["title"], hit["title"]) for hit in anime)
+
+
+def search_all(keyword, media_type="all", timeout=SITE_TIMEOUT):
+    """Search across sites with the anime/series/movie priority rules.
+
+    Returns [{title, url, poster, site, type}], anime first, then series, then
+    movies. A link only appears once, under the first type that claimed it.
+    """
+    want_anime = media_type in ("all", "anime")
+    want_series = media_type in ("all", "series")
+    want_movies = media_type in ("all", "movie")
+
+    sites = []
+    if want_anime or want_series:
+        # Series need aniworld too, to know which s.to hits are really anime
+        sites += [ANIME_SITE, SERIES_SITE]
+    if want_movies:
+        sites += MOVIE_SITES
+    hits = _search_sites(sites, keyword, timeout)
+
+    anime = hits.get(ANIME_SITE, [])
+    results = []
+    if want_anime:
+        results += [{**item, "site": ANIME_SITE, "type": "anime"} for item in anime]
+
+    if want_series:
+        series = [{**item, "site": SERIES_SITE} for item in hits.get(SERIES_SITE, [])]
+        if not series:
+            # Reuse any site the movie search already asked, kinox and moflix
+            # carry both
+            missing = [site for site in SERIES_FALLBACK_SITES if site not in hits]
+            hits.update(_search_sites(missing, keyword, timeout))
+            series = [
+                {**item, "site": site}
+                for site in SERIES_FALLBACK_SITES
+                for item in hits.get(site, [])
+            ]
+        results += [
+            {**item, "type": "series"} for item in series if not _is_anime(item, anime)
+        ]
+
+    if want_movies:
+        # kinox and moflix list anime series too; with aniworld asked as well
+        # (type "all"), those belong to the anime above, not here
+        results += [
+            {**item, "site": site, "type": "movie"}
+            for site in MOVIE_SITES
+            for item in hits.get(site, [])
+            if not _is_anime(item, anime)
+        ]
+
+    seen = set()
+    unique = []
+    for item in results:
+        if item["url"] not in seen:
+            seen.add(item["url"])
+            unique.append(item)
+    return unique

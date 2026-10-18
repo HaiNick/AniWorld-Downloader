@@ -160,6 +160,50 @@ def test_a_write_key_cannot_touch_admin_endpoints(client, api_key, method, path)
     assert "full access" in response.get_json()["error"]
 
 
+SYNCED = "https://aniworld.to/anime/stream/naruto"
+
+
+def test_a_write_key_can_tick_sync_this(client, api_key, monkeypatch):
+    """The Jellyfin plugin tracks series with a write key, not a full one."""
+    monkeypatch.setenv("ANIWORLD_ENABLE_AUTOSYNC", "1")
+    raw, _ = api_key(scope="write")
+    response = client.post(
+        "/api/autosync/tracked",
+        json={"series_url": SYNCED, "tracked": True, "language": "German Sub"},
+        headers=headers(raw),
+    )
+    assert response.status_code == 200
+    assert db.get_autosync_series_by_url(SYNCED)["language"] == "German Sub"
+
+    state = client.get(f"/api/autosync/tracked?url={SYNCED}", headers=headers(raw))
+    assert state.get_json()["tracked"] is True
+
+
+def test_a_write_key_still_cannot_manage_auto_sync(client, api_key, monkeypatch):
+    monkeypatch.setenv("ANIWORLD_ENABLE_AUTOSYNC", "1")
+    raw, _ = api_key(scope="write")
+    for call, path in (
+        (client.get, "/api/autosync/series"),
+        (client.post, "/api/autosync/run"),
+    ):
+        assert call(path, json={}, headers=headers(raw)).status_code == 403
+
+
+def test_a_read_key_cannot_tick_sync_this(client, api_key, monkeypatch):
+    monkeypatch.setenv("ANIWORLD_ENABLE_AUTOSYNC", "1")
+    raw, _ = api_key(scope="read")
+    for response in (
+        client.get(f"/api/autosync/tracked?url={SYNCED}", headers=headers(raw)),
+        client.post(
+            "/api/autosync/tracked",
+            json={"series_url": SYNCED, "tracked": True, "language": "German Sub"},
+            headers=headers(raw),
+        ),
+    ):
+        assert response.status_code == 403
+    assert db.get_autosync_series_by_url(SYNCED) is None
+
+
 # ---------------------------------------------------------------------------
 # Admin scope
 # ---------------------------------------------------------------------------
