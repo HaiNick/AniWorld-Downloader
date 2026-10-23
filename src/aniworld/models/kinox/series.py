@@ -50,9 +50,9 @@ except ImportError:
 
 KINOX_DOMAIN = os.getenv("ANIWORLD_KINOX_DOMAIN", "").strip() or "kinox.to"
 
-# Stable marker embedded in the error message when kinox's captcha blocks a
-# download, so the web queue can recognise it and offer a "solve on kinox"
-# button (only for kinox — no other site uses this).
+# Stable marker embedded in the error message when kinox's captcha still blocks
+# a download after the captcha browser, so the web queue can recognise it and
+# offer a "solve on kinox" button (only for kinox — no other site uses this).
 KINOX_CAPTCHA_MARKER = "[kinox-captcha]"
 
 
@@ -162,8 +162,10 @@ def _resolve_embed(rel, referer):
 
     # Blocked: a 403/429/503, or a redirect that stayed on kinox serving the JS
     # "Verifizierung" bot-check. Every visitor gets it and it never resolves
-    # without a real browser solving it once, so fail with a marker the web UI
-    # turns into a "solve the captcha on kinox, then retry" button.
+    # without a real browser solving it once. Solving it in the user's own
+    # browser does not help: the clearance is a cookie in that browser, not in
+    # this session. So solve it in the captcha browser, which runs here, is
+    # streamed into the queue and hands its cookies to this session.
     body = ""
     try:
         body = resp.text[:4000].lower()
@@ -174,11 +176,48 @@ def _resolve_embed(rel, referer):
         or _stayed_on_kinox(final)
         or "verifizierung" in body
     ):
+        embed = _solve_in_browser(target, referer)
+        if embed:
+            return embed
         raise RuntimeError(
-            "kinox: verification captcha required — open the title on kinox, "
-            f"solve the captcha there, then retry the download {KINOX_CAPTCHA_MARKER}"
+            "kinox: verification captcha was not solved in time — retry the "
+            "download and solve it from the queue while it runs "
+            f"{KINOX_CAPTCHA_MARKER}"
         )
     raise RuntimeError(f"kinox: redirect failed (status {resp.status_code}, {final})")
+
+
+def _solve_in_browser(target, referer):
+    """The hoster embed behind kinox's verification, or None if it stays blocked.
+
+    The captcha browser waits until someone solves the check, through the queue
+    or a visible window, then returns the hoster it landed on. When it stays on
+    kinox, the cookies it handed over may still let a plain request through.
+    """
+    try:
+        from ...playwright.captcha import solve_captcha
+    except ImportError:
+        from aniworld.playwright.captcha import solve_captcha
+
+    try:
+        result = solve_captcha(target)
+    except Exception:
+        # No browser here (missing Chromium or display): the old error stands
+        return None
+    if not result:
+        return None
+    if not _stayed_on_kinox(result):
+        return result
+
+    resp = get_session().get(
+        target,
+        headers={"Referer": referer, "Accept-Encoding": "gzip, deflate"},
+        allow_redirects=True,
+    )
+    final = str(resp.url)
+    if resp.status_code < 400 and not _stayed_on_kinox(final):
+        return final
+    return None
 
 
 class _KinoxLanguageMixin:
