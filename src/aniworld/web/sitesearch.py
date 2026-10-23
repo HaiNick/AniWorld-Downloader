@@ -37,6 +37,7 @@ from ..search import (
     query_s_to,
 )
 from .media import folder_matches_title
+from .settings_store import site_enabled
 
 logger = get_logger(__name__)
 
@@ -284,10 +285,13 @@ def search_stream(keyword, media_type="all", timeout=SITE_TIMEOUT):
     running = {}  # site -> (future, started)
 
     def start(site):
-        if site not in running:
+        # A site switched off in the settings is left out, like everywhere else
+        if site not in running and site_enabled(site):
             running[site] = (pool.submit(search, site, keyword), time.monotonic())
 
     def answer(site):
+        if site not in running:
+            return [], False
         future, started = running[site]
         try:
             return future.result(
@@ -330,7 +334,7 @@ def search_stream(keyword, media_type="all", timeout=SITE_TIMEOUT):
         series_sites = ()
         if shows:
             anime, late = answer(ANIME_SITE)
-            if want_anime:
+            if want_anime and ANIME_SITE in running:
                 yield event(ANIME_SITE, "anime", anime, late)
             else:
                 done.add(ANIME_SITE)

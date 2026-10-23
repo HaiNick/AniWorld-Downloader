@@ -7,6 +7,16 @@ import pytest
 
 from aniworld.web import sitesearch
 
+# Most tests are about the ranking rules, so every site is switched on for them;
+# the tests at the end switch some off. off.add(site) switches one off.
+off = set()
+
+
+@pytest.fixture(autouse=True)
+def switches(monkeypatch):
+    off.clear()
+    monkeypatch.setattr(sitesearch, "site_enabled", lambda site: site not in off)
+
 
 def hit(title, site):
     slug = title.lower().replace(" ", "-")
@@ -288,3 +298,53 @@ def test_the_stream_api_rejects_an_unknown_type(client, sites):
     response = client.post("/api/search/stream", json={"keyword": "x", "type": "manga"})
     assert response.status_code == 400
     assert sites["asked"] == []
+
+
+# ---------------------------------------------------------------------------
+# Sites switched off in the settings are not searched at all
+# ---------------------------------------------------------------------------
+def test_a_switched_off_series_site_is_not_asked(sites):
+    off.update({"burningseries", "kinox"})
+    sites["burningseries"] = ["Dark"]
+    sites["kinox"] = ["Dark"]
+    sites["moflix"] = ["Dark Matter"]
+    assert found(sitesearch.search_all("x", "series")) == [
+        ("Dark Matter", "moflix", "series"),
+    ]
+    assert not {"burningseries", "kinox"} & set(sites["asked"])
+
+
+def test_a_switched_off_movie_site_is_not_asked(sites):
+    off.add("kinox")
+    sites["kinox"] = ["Dune"]
+    sites["megakino"] = ["Dune"]
+    assert found(sitesearch.search_all("x", "movie")) == [("Dune", "megakino", "movie")]
+    assert set(sites["asked"]) == set(sitesearch.MOVIE_SITES) - {"kinox"}
+
+
+def test_a_switched_off_site_is_never_pending(sites):
+    off.add("kinox")
+    events = list(sitesearch.search_stream("x"))
+    assert all("kinox" not in e["pending"] for e in events)
+    assert "kinox" not in {e["site"] for e in events}
+
+
+def test_series_still_work_with_aniworld_switched_off(sites):
+    off.add("aniworld")
+    sites["aniworld"] = ["Naruto"]
+    sites["sto"] = ["Naruto", "Dark"]
+    assert found(sitesearch.search_all("x", "all")) == [
+        ("Naruto", "sto", "series"),
+        ("Dark", "sto", "series"),
+    ]
+    assert "aniworld" not in sites["asked"]
+
+
+def test_off_by_default_means_off_in_the_search(monkeypatch):
+    # The real switches: kinox and burningseries are off unless turned on
+    monkeypatch.undo()
+    from aniworld.web import settings_store
+
+    for site in ("kinox", "burningseries"):
+        monkeypatch.delenv(settings_store.site_env_key(site), raising=False)
+        assert not sitesearch.site_enabled(site)
