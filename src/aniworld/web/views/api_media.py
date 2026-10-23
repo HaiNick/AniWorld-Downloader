@@ -5,6 +5,8 @@ import re
 import time
 from types import SimpleNamespace
 
+from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
+from curl_cffi.requests.exceptions import RequestException as CurlRequestException
 from flask import Response, jsonify, request, stream_with_context
 from niquests.exceptions import HTTPError, RequestException
 
@@ -13,6 +15,7 @@ from ...extractors.provider.hanime_tv import fetch_hanime_trending
 from ...logger import get_logger
 from ...models.common import clean_title
 from ...models.mangafire_to.series import _get as get_mangafire
+from ...models.moflix_stream.http import MoflixError
 from ...providers import resolve_provider
 from ...search import (
     GENRE_PAGE_SIZE,
@@ -99,17 +102,25 @@ def search():
         results = [
             _typed_hit(item) for item in sitesearch.search_all(keyword, media_type)
         ]
-    elif site == "htv":
-        results = _search_hanime(keyword)
-    else:
-        results = [
-            {
-                "title": item["title"],
-                "url": item["url"],
-                "poster_url": media.proxy_image(item["poster"]),
-            }
-            for item in sitesearch.search(site, keyword)
-        ]
+        return jsonify({"results": results})
+
+    try:
+        if site == "htv":
+            results = _search_hanime(keyword)
+        else:
+            results = [
+                {
+                    "title": item["title"],
+                    "url": item["url"],
+                    "poster_url": media.proxy_image(item["poster"]),
+                }
+                for item in sitesearch.search(site, keyword, raise_errors=True)
+            ]
+    except MoflixError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        logger.warning("Search on %s failed (%s)", site, type(exc).__name__)
+        return jsonify({"error": f"Search on {site} failed. Please try again."}), 502
     return jsonify({"results": results})
 
 
@@ -163,11 +174,7 @@ def _search_hanime(keyword):
     """hanime groups sequels under one slug family, show one card per franchise."""
     from ...search import query_hanime
 
-    try:
-        hits = query_hanime(keyword) or []
-    except Exception as exc:
-        logger.warning("HTV search failed: %s", exc)
-        return []
+    hits = query_hanime(keyword) or []
 
     results = []
     seen = set()
@@ -690,12 +697,14 @@ def genre():
             lambda: _genre_page(site, slug, page),
             raise_errors=True,
         )
-    except HTTPError as exc:
+    except (HTTPError, CurlHTTPError) as exc:
         if exc.response is not None and exc.response.status_code == 404:
             return jsonify({"error": f"Genre not available: {slug}"}), 404
         return jsonify({"error": f"Failed to fetch genre {slug}"}), 502
-    except RequestException:
+    except (RequestException, CurlRequestException):
         return jsonify({"error": f"Failed to fetch genre {slug}"}), 502
+    except MoflixError as exc:
+        return jsonify({"error": str(exc)}), 502
     except ValueError:
         # Sites that know their genres up front reject an unknown one outright
         return jsonify({"error": f"Genre not available: {slug}"}), 404
@@ -816,7 +825,13 @@ def _cached(key, fetch, *, raise_errors=False):
 
 def _make_browse_view(key, fetch):
     def view():
-        results = _cached(key, fetch)
+        try:
+            results = _cached(key, fetch, raise_errors=True)
+        except MoflixError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except Exception as exc:
+            logger.warning("Browse fetch '%s' failed (%s)", key, type(exc).__name__)
+            results = None
         if results is None:
             return jsonify({"error": f"Failed to fetch {key.replace('_', ' ')}"}), 500
         return jsonify(

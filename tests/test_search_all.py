@@ -20,7 +20,7 @@ def sites(monkeypatch):
     asked = []
     lock = threading.Lock()
 
-    def fake_search(site, keyword):
+    def fake_search(site, keyword, *, raise_errors=False):
         with lock:
             asked.append(site)
         return [hit(title, site) for title in catalog.get(site, [])]
