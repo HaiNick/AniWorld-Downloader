@@ -24,6 +24,16 @@ def test_the_change_shows_up_on_the_next_read(client):
     assert client.get("/api/settings").get_json()["enable_htv"] is True
 
 
+def test_the_manga_path_can_be_set_and_read_back(client, monkeypatch, tmp_path):
+    # Recorded first, so the variable the request sets is gone after the test
+    monkeypatch.setenv("ANIWORLD_MANGA_DOWNLOAD_PATH", "")
+    assert client.get("/api/settings").get_json()["manga_download_path"] == ""
+    manga = str(tmp_path / "manga")
+    response = client.put("/api/settings", json={"manga_download_path": manga})
+    assert response.status_code == 200
+    assert client.get("/api/settings").get_json()["manga_download_path"] == manga
+
+
 def test_an_invalid_setting_is_a_400_with_a_reason(client):
     response = client.put("/api/settings", json={"ui_language": "klingon"})
     assert response.status_code == 400

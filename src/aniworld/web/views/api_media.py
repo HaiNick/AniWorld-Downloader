@@ -543,7 +543,12 @@ def _mangafire_pages(provider, url, series_url):
     title = (
         getattr(found, "title_cleaned", None) or getattr(found, "title", "") or ""
     ).lower()
-    bases = [base for base in paths.scan_bases() if base.is_dir()]
+    manga_root = paths.manga_download_path()
+    bases = [
+        base
+        for base in [*paths.scan_bases(), *([manga_root] if manga_root else [])]
+        if base.is_dir()
+    ]
 
     def on_disk(page):
         if not title:

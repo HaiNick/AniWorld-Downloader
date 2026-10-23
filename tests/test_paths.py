@@ -158,3 +158,25 @@ def test_separation_multiplies_every_root(monkeypatch, tmp_path):
     monkeypatch.setenv("ANIWORLD_LANG_SEPARATION", "1")
     db.add_custom_path("Movies", str(tmp_path / "movies"))
     assert len(paths.scan_bases()) == 2 * len(paths.ALL_LANG_FOLDERS)
+
+
+# ---------------------------------------------------------------------------
+# Manga: one folder of their own, never split by language
+# ---------------------------------------------------------------------------
+def test_the_manga_path_is_empty_until_set(monkeypatch, tmp_path):
+    monkeypatch.delenv("ANIWORLD_MANGA_DOWNLOAD_PATH", raising=False)
+    assert paths.manga_download_path() is None
+    monkeypatch.setenv("ANIWORLD_MANGA_DOWNLOAD_PATH", str(tmp_path / "manga"))
+    assert paths.manga_download_path() == tmp_path / "manga"
+
+
+def test_manga_skip_the_language_folders(monkeypatch):
+    """None hands the choice to the model, which knows the manga path."""
+    monkeypatch.setenv("ANIWORLD_LANG_SEPARATION", "1")
+    assert paths.target_path("MangaFire") is None
+
+
+def test_a_custom_path_still_takes_manga(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANIWORLD_LANG_SEPARATION", "1")
+    path_id = db.add_custom_path("Books", str(tmp_path / "books"))
+    assert paths.target_path("MangaFire", path_id) == str(tmp_path / "books")

@@ -50,6 +50,12 @@ def movie_download_path():
     return expand(raw) if raw else None
 
 
+def manga_download_path():
+    """Optional override for manga (MangaFire) downloads. Empty when unset."""
+    raw = os.environ.get("ANIWORLD_MANGA_DOWNLOAD_PATH", "").strip()
+    return expand(raw) if raw else None
+
+
 def custom_path_base(custom_path_id):
     """Base directory of a custom path, or None when it no longer exists."""
     entry = db.get_custom_path(custom_path_id)
@@ -92,7 +98,9 @@ def scan_bases():
 def target_path(language, custom_path_id=None):
     """Directory a download should be written to, or None to let the downloader decide."""
     base = base_for(custom_path_id)
-    if lang_separation_enabled():
+    # MangaFire is queued with "MangaFire" as its language, which is no
+    # language: manga keeps one folder and its own path setting
+    if lang_separation_enabled() and language != "MangaFire":
         return str(base / lang_folder_for(language))
     if custom_path_id:
         return str(base)

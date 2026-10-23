@@ -99,6 +99,7 @@
     el("downloadPath").value = settings.download_path || "";
     el("seriesDownloadPath").value = settings.series_download_path || "";
     el("movieDownloadPath").value = settings.movie_download_path || "";
+    el("mangaDownloadPath").value = settings.manga_download_path || "";
     el("uiLanguage").value = settings.ui_language;
     el("outputFormat").value = settings.output_format;
 
@@ -138,6 +139,10 @@
 
   el("saveMovieDownloadPathBtn").addEventListener("click", () => {
     save({ movie_download_path: el("movieDownloadPath").value.trim() });
+  });
+
+  el("saveMangaDownloadPathBtn").addEventListener("click", () => {
+    save({ manga_download_path: el("mangaDownloadPath").value.trim() });
   });
 
   /* ===== Where a download lands =====

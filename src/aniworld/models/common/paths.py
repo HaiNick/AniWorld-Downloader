@@ -9,8 +9,9 @@ def resolve_download_path(
 ) -> Path:
     """Expand model paths beneath home; CLI output paths arrive absolute.
 
-    ``env_key`` names a more specific setting (ANIWORLD_MOVIE_DOWNLOAD_PATH or
-    ANIWORLD_SERIES_DOWNLOAD_PATH) that wins over ANIWORLD_DOWNLOAD_PATH. Pass a
+    ``env_key`` names a more specific setting (ANIWORLD_MOVIE_DOWNLOAD_PATH,
+    ANIWORLD_SERIES_DOWNLOAD_PATH or ANIWORLD_MANGA_DOWNLOAD_PATH) that wins over
+    ANIWORLD_DOWNLOAD_PATH. Pass a
     callable when picking the key needs the page, so an explicit path never
     triggers that fetch.
     """

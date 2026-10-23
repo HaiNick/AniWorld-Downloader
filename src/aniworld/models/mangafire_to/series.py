@@ -26,6 +26,8 @@ CHAPTER_URL = "https://mangafire.to/title/{}/chapter/{}"
 CHAPTER_API = "https://mangafire.to/api/chapters/{}"
 VOLUMES_API = "https://mangafire.to/api/titles/{}/volumes"
 VOLUME_API = "https://mangafire.to/api/volumes/{}"
+# Manga get their own root, like series and movies
+MANGA_PATH_KEY = "ANIWORLD_MANGA_DOWNLOAD_PATH"
 
 HEADERS = {"Referer": "https://mangafire.to/"}
 
@@ -196,7 +198,7 @@ class MangaFireToPage:
         """Download the page image."""
         if folder is None:
             folder = (
-                resolve_download_path()
+                resolve_download_path(None, MANGA_PATH_KEY)
                 / _safe_name(self.chapter.series.title)
                 / self.chapter.folder_name
             )
@@ -427,7 +429,7 @@ class MangaFireToChapter:
     @property
     def selected_path(self):
         """Return the expanded download root."""
-        return str(resolve_download_path(self.__selected_path_param))
+        return str(resolve_download_path(self.__selected_path_param, MANGA_PATH_KEY))
 
     @property
     def selected_language(self):
@@ -856,7 +858,9 @@ class MangaFireToSeries:
         """Download native volumes for CBZ/EPUB, or chapter images."""
         format = format.strip().lower()
         if folder is None:
-            folder = resolve_download_path() / _safe_name(self.title)
+            folder = resolve_download_path(None, MANGA_PATH_KEY) / _safe_name(
+                self.title
+            )
         else:
             folder = Path(folder)
 

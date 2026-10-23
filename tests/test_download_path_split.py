@@ -1,4 +1,4 @@
-"""Series and movie downloads can each have their own root, anime keeps the main one."""
+"""Series, movie and manga downloads can each have their own root, anime keeps the main one."""
 
 from pathlib import Path
 
@@ -9,11 +9,14 @@ from aniworld.models.burningseries.series import BurningSeriesEpisode
 from aniworld.models.common.paths import resolve_download_path
 from aniworld.models.filmo_to.episode import FilmoEpisode
 from aniworld.models.filmpalast_to.episode import FilmPalastEpisode
+from aniworld.models.mangafire_to.series import MangaFireToChapter
 from aniworld.models.megakino.series import MegaKinoEpisode
 from aniworld.models.s_to.episode import SerienstreamEpisode
 
 SERIES = "ANIWORLD_SERIES_DOWNLOAD_PATH"
 MOVIE = "ANIWORLD_MOVIE_DOWNLOAD_PATH"
+MANGA = "ANIWORLD_MANGA_DOWNLOAD_PATH"
+CHAPTER = "https://mangafire.to/title/x/chapter/1"
 
 
 @pytest.fixture
@@ -70,3 +73,21 @@ def test_title_type_is_only_looked_up_when_needed(monkeypatch, tmp_path):
 
     assert resolve_download_path(None, lookup) == tmp_path
     assert resolve_download_path(tmp_path / "x", lookup) == tmp_path / "x"
+
+
+def test_manga_land_in_their_own_root(roots, monkeypatch, tmp_path):
+    monkeypatch.setenv(MANGA, str(tmp_path / "manga"))
+    assert Path(MangaFireToChapter(CHAPTER).selected_path) == tmp_path / "manga"
+
+
+def test_manga_fall_back_to_the_main_path_when_unset(roots, monkeypatch):
+    monkeypatch.delenv(MANGA, raising=False)
+    assert Path(MangaFireToChapter(CHAPTER).selected_path) == roots[0]
+
+
+def test_an_explicit_path_beats_the_manga_root(roots, monkeypatch, tmp_path):
+    monkeypatch.setenv(MANGA, str(tmp_path / "manga"))
+    chosen = tmp_path / "chosen"
+    assert (
+        Path(MangaFireToChapter(CHAPTER, selected_path=chosen).selected_path) == chosen
+    )

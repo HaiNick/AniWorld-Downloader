@@ -368,6 +368,7 @@ PATH_ENV_KEYS = frozenset(
         "ANIWORLD_DOWNLOAD_PATH",
         "ANIWORLD_SERIES_DOWNLOAD_PATH",
         "ANIWORLD_MOVIE_DOWNLOAD_PATH",
+        "ANIWORLD_MANGA_DOWNLOAD_PATH",
     }
 )
 
@@ -390,10 +391,12 @@ def _persist_paths(updates):
 def read_settings():
     series_path = paths.series_download_path()
     movie_path = paths.movie_download_path()
+    manga_path = paths.manga_download_path()
     return {
         "download_path": str(paths.default_download_path()),
         "series_download_path": str(series_path) if series_path else "",
         "movie_download_path": str(movie_path) if movie_path else "",
+        "manga_download_path": str(manga_path) if manga_path else "",
         "lang_separation": paths.lang_separation_enabled(),
         "disable_english_sub": english_sub_disabled(),
         "show_all_languages": show_all_languages(),
@@ -518,6 +521,10 @@ def update_settings(data):
     if "movie_download_path" in data:
         updates["ANIWORLD_MOVIE_DOWNLOAD_PATH"] = str(
             data["movie_download_path"]
+        ).strip()
+    if "manga_download_path" in data:
+        updates["ANIWORLD_MANGA_DOWNLOAD_PATH"] = str(
+            data["manga_download_path"]
         ).strip()
 
     for field, key in _BOOL_SETTINGS.items():
