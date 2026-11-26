@@ -63,6 +63,10 @@ def chapter(monkeypatch, request):
             for n in (1, 2)
         ]
         monkeypatch.setattr(result, "_MangaFireToChapter__pages", pages)
+        title = "DARLING in the FRANXX" if request.param == DARLING else "Velvet Kiss"
+        monkeypatch.setattr(
+            result, "_MangaFireToChapter__chapter_data", {"title": {"name": title}}
+        )
         return result
 
     return make
@@ -84,7 +88,12 @@ def test_selected_root_keeps_existing_downloads(
     item = chapter(selected_path="Manga with spaces")
     item.mangafire_format = format
     destination = item.download()
-    folder = tmp_path / "Manga with spaces" / "Chapter 1" / "Chapter 1"
+    folder = (
+        tmp_path
+        / "Manga with spaces"
+        / item.chapter_data["title"]["name"]
+        / "Chapter 1"
+    )
     if format in ("cbz", "epub"):
         assert destination == folder.with_name(f"Chapter 1.{format}")
         assert read_images(destination) == {
@@ -537,6 +546,358 @@ def test_direct_volume_url_uses_id_but_names_file_by_number(
     assert "chapters/250113" not in calls
     volume.download(tmp_path / "Volume 1")
     assert calls.count("/zlwvm/2.png") == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        DARLING,
+        DARLING + "/",
+        "https://mangafire.to/title/zlwvm",
+        "http://www.mangafire.to/title/zlwvm/",
+    ],
+)
+def test_title_url_forms_resolve_the_same_manga(volume_api, url):
+    _, _, calls = volume_api
+
+    series = manga.MangaFireToSeries(url)
+
+    assert calls == []
+    assert series.hid == "zlwvm"
+    assert series.title == "DARLING in the FRANXX"
+    assert calls == ["titles/zlwvm"]
+
+
+def test_id_only_title_without_display_metadata_uses_id(volume_api):
+    _, payloads, _ = volume_api
+    del payloads["titles/zlwvm"]["data"]["title"]
+
+    series = manga.MangaFireToSeries("https://mangafire.to/title/zlwvm")
+
+    assert series.title == "zlwvm"
+
+
+@pytest.mark.parametrize("with_parent", [False, True])
+@pytest.mark.parametrize(
+    "url,number",
+    [
+        (DARLING + "/chapter/1", 1),
+        (DARLING + "/chapter/1/", 1),
+        ("https://mangafire.to/title/zlwvm/chapter/1", 1),
+        ("http://www.mangafire.to/title/zlwvm-other-slug/chapter/01.0/", 1),
+        (DARLING + "/chapter/1.5", 1.5),
+        ("https://mangafire.to/title/zlwvm/chapter/1.50/", 1.5),
+    ],
+)
+def test_chapter_url_forms_resolve_and_download(
+    tmp_path, volume_api, with_parent, url, number
+):
+    parent, payloads, calls = volume_api
+    fractional = payloads["titles/zlwvm/chapters"]["items"][0].copy()
+    fractional.update(id=4532230, number=1.5)
+    payloads["titles/zlwvm/chapters"]["items"].append(fractional)
+    payloads["chapters/4532230"] = {
+        "data": {**payloads["chapters/4532228"]["data"], "id": 4532230, "number": 1.5}
+    }
+    chapter_id = 4532228 if number == 1 else 4532230
+
+    chapter = manga.MangaFireToChapter(
+        url,
+        series=parent if with_parent else None,
+        selected_path=tmp_path,
+        format="jpg",
+    )
+
+    assert chapter.chapter_id == chapter_id
+    assert chapter.chapter_number == number
+    destination = chapter.download()
+    assert destination == tmp_path / "DARLING in the FRANXX" / f"Chapter {number}"
+    assert (destination / "001.png").read_bytes() == image_bytes()
+    assert (destination / "002.png").read_bytes() == image_bytes()
+    assert f"chapters/{chapter_id}" in calls
+    assert "chapters/0" not in calls
+
+
+@pytest.mark.parametrize("series_url", [DARLING, "https://mangafire.to/title/zlwvm"])
+@pytest.mark.parametrize("with_series_url", [False, True])
+def test_web_chapter_url_forms_return_pages(
+    client, volume_api, series_url, with_series_url
+):
+    query = {"url": series_url + "/chapter/1"}
+    if with_series_url:
+        query["series_url"] = DARLING
+
+    response = client.get("/api/episodes", query_string=query)
+
+    assert response.status_code == 200
+    assert [page["page_number"] for page in response.json["episodes"]] == [1, 2]
+
+
+def test_web_id_only_title_returns_metadata(client, volume_api):
+    response = client.get(
+        "/api/series", query_string={"url": "https://mangafire.to/title/zlwvm"}
+    )
+
+    assert response.status_code == 200
+    assert response.json["title"] == "DARLING in the FRANXX"
+
+
+@pytest.mark.parametrize("series_url", [DARLING, "https://mangafire.to/title/zlwvm"])
+def test_unknown_chapter_does_not_request_id_zero(volume_api, series_url):
+    _, _, calls = volume_api
+    chapter = manga.MangaFireToChapter(series_url + "/chapter/99")
+
+    with pytest.raises(ValueError, match="Could not resolve MangaFire chapter ID"):
+        _ = chapter.pages
+    assert "chapters/0" not in calls
+
+
+def test_chapter_does_not_match_another_mangas_number(volume_api):
+    _, _, calls = volume_api
+    parent = manga.MangaFireToSeries(VELVET_KISS)
+    chapter = manga.MangaFireToChapter(DARLING + "/chapter/1", series=parent)
+
+    with pytest.raises(ValueError, match="Could not resolve MangaFire chapter ID"):
+        _ = chapter.pages
+    assert not any(call.startswith("chapters/") for call in calls)
+
+
+@pytest.mark.parametrize("kind,unit_id", [("chapter", 1), ("volume", 250113)])
+@pytest.mark.parametrize(
+    "root_type", ["absolute", "relative", "tilde", "configured", "default"]
+)
+def test_standalone_page_inherits_chapter_destination(
+    tmp_path, volume_api, monkeypatch, kind, unit_id, root_type
+):
+    _, _, calls = volume_api
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    default = tmp_path / "Configured manga"
+    monkeypatch.setenv("ANIWORLD_DOWNLOAD_PATH", str(default))
+    selected = {
+        "absolute": tmp_path / "Selected manga",
+        "relative": "Selected manga",
+        "tilde": "~/Selected manga",
+        "configured": None,
+        "default": None,
+    }[root_type]
+    expected_root = {
+        "absolute": tmp_path / "Selected manga",
+        "relative": home / "Selected manga",
+        "tilde": home / "Selected manga",
+        "configured": default,
+        "default": home / "Downloads",
+    }[root_type]
+    if root_type == "default":
+        monkeypatch.delenv("ANIWORLD_DOWNLOAD_PATH")
+    item = manga.MangaFireToChapter(
+        f"{DARLING}/{kind}/{unit_id}",
+        chapter_id=4532228 if kind == "chapter" else None,
+        chapter_number=1,
+        selected_path=selected,
+        format="jpg",
+    )
+
+    page = item.pages[0]
+    destination = page.download()
+    folder = expected_root / "DARLING in the FRANXX" / item.folder_name
+
+    assert destination == folder / "001.png"
+    assert destination.read_bytes() == image_bytes()
+    assert item.download() == folder
+    assert (folder / "002.png").read_bytes() == image_bytes()
+    assert calls.count("/zlwvm/1.png") == 1
+    if expected_root != default:
+        assert not default.exists()
+
+
+@pytest.mark.parametrize("format", ["jpg", "cbz", "epub"])
+@pytest.mark.parametrize("chapter_name", ["", "Chapter-only title"])
+def test_standalone_chapter_uses_manga_title(
+    tmp_path, volume_api, format, chapter_name
+):
+    _, _, calls = volume_api
+    item = manga.MangaFireToChapter(
+        f"{DARLING}/chapter/1",
+        chapter_id=4532228,
+        chapter_number=1,
+        chapter_name=chapter_name,
+        selected_path=tmp_path,
+        format=format,
+    )
+    assert item._series is None
+
+    destination = item.download()
+    folder = tmp_path / "DARLING in the FRANXX" / item.folder_name
+    expected = (
+        folder if format == "jpg" else folder.with_name(f"{folder.name}.{format}")
+    )
+
+    assert destination == expected
+    if format == "jpg":
+        assert (destination / "001.png").read_bytes() == image_bytes()
+    else:
+        assert read_images(destination) == dict.fromkeys(
+            ("001.png", "002.png"), image_bytes()
+        )
+    if format == "epub":
+        package = ET.fromstring(read_archive(destination)["content.opf"])
+        assert (
+            package.find(
+                "{http://www.idpf.org/2007/opf}metadata/{http://purl.org/dc/elements/1.1/}title"
+            ).text
+            == f"DARLING in the FRANXX - {item.folder_name}"
+        )
+    assert item.download() == destination
+    assert calls.count("/zlwvm/1.png") == calls.count("/zlwvm/2.png") == 1
+
+
+def test_standalone_chapter_without_embedded_title_uses_parent_metadata(
+    tmp_path, volume_api
+):
+    _, payloads, calls = volume_api
+    del payloads["chapters/4532228"]["data"]["title"]
+    item = manga.MangaFireToChapter(
+        f"{DARLING}/chapter/1",
+        chapter_id=4532228,
+        chapter_number=1,
+        selected_path=tmp_path,
+        format="jpg",
+    )
+
+    assert item.download() == tmp_path / "DARLING in the FRANXX" / "Chapter 1"
+    assert "titles/zlwvm" in calls
+
+
+@pytest.mark.parametrize("format", ["jpg", "cbz"])
+def test_explicit_folder_needs_no_title_metadata(
+    tmp_path, chapter, fetch, monkeypatch, format
+):
+    monkeypatch.chdir(tmp_path)
+    item = chapter(format=format)
+    monkeypatch.setattr(item, "_MangaFireToChapter__chapter_data", None)
+    folder = Path("Direct folder") / item.folder_name
+
+    destination = item.download(folder)
+
+    assert destination == (
+        folder if format == "jpg" else folder.with_name(f"{folder.name}.cbz")
+    )
+    assert fetch.call_count == 2
+    assert all(
+        call.args[0].startswith("https://example.invalid/")
+        for call in fetch.call_args_list
+    )
+
+
+@pytest.mark.parametrize(
+    "path_type", ["tilde-string", "tilde-path", "relative", "absolute"]
+)
+@pytest.mark.parametrize(
+    "scope,format",
+    [
+        ("image", "jpg"),
+        ("page", "jpg"),
+        ("chapter", "jpg"),
+        ("chapter", "cbz"),
+        ("chapter", "epub"),
+        ("series", "jpg"),
+        ("series", "cbz"),
+        ("series", "epub"),
+    ],
+)
+def test_explicit_destinations_expand_home_shortcut(
+    tmp_path, volume_api, monkeypatch, path_type, scope, format
+):
+    series, _, _ = volume_api
+    home = tmp_path / "home"
+    work = tmp_path / "work"
+    home.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.chdir(work)
+    if path_type.startswith("tilde"):
+        argument = "~/Output with spaces"
+        expected = home / "Output with spaces"
+    elif path_type == "relative":
+        argument = "Output with spaces"
+        expected = Path(argument)
+    else:
+        expected = tmp_path / "Absolute output"
+        argument = str(expected)
+    if scope == "image":
+        argument += ".png"
+        expected = expected.with_name(expected.name + ".png")
+    if path_type == "tilde-path":
+        argument = Path(argument)
+    item = manga.MangaFireToChapter(
+        DARLING + "/chapter/1",
+        series=series,
+        chapter_id=4532228,
+        chapter_number=1,
+        format=format,
+    )
+
+    if scope == "image":
+        destination = item.pages[0].image.download(argument)
+        assert destination == expected
+        assert destination.read_bytes() == image_bytes()
+    elif scope == "page":
+        destination = item.pages[0].download(argument)
+        assert destination == expected / "001.png"
+        assert destination.read_bytes() == image_bytes()
+    else:
+        if scope == "series":
+            assert series.download(argument, chapters=[item], format=format) == expected
+            expected /= item.folder_name
+        else:
+            destination = item.download(argument)
+        if format == "jpg":
+            if scope == "chapter":
+                assert destination == expected
+            assert (expected / "001.png").read_bytes() == image_bytes()
+        else:
+            expected = expected.with_name(expected.name + f".{format}")
+            if scope == "chapter":
+                assert destination == expected
+            assert read_images(expected) == dict.fromkeys(
+                ("001.png", "002.png"), image_bytes()
+            )
+    assert not (work / "~").exists()
+
+
+def test_missing_title_metadata_does_not_create_a_wrong_destination(
+    tmp_path, volume_api, monkeypatch
+):
+    _, payloads, _ = volume_api
+    del payloads["chapters/4532228"]["data"]["title"]
+    original_get = manga._get
+
+    def get(url):
+        if url == "https://mangafire.to/api/titles/zlwvm":
+            raise OSError("Title metadata unavailable")
+        return original_get(url)
+
+    monkeypatch.setattr(manga, "_get", get)
+    selected = tmp_path / "Chosen manga"
+    item = manga.MangaFireToChapter(
+        f"{DARLING}/chapter/1",
+        chapter_id=4532228,
+        chapter_number=1,
+        selected_path=selected,
+        format="jpg",
+    )
+
+    with pytest.raises(OSError, match="Title metadata unavailable"):
+        item.download()
+    assert not selected.exists()
+    explicit = tmp_path / "Explicit folder"
+    assert item.download(explicit) == explicit
+    assert (explicit / "001.png").read_bytes() == image_bytes()
 
 
 def test_empty_explicit_series_selection_does_not_download_units(tmp_path, volume_api):

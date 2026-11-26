@@ -205,6 +205,46 @@ def test_filemoon_decrypts_unpadded_byse_playback_data():
     )
 
 
+def _encode(value):
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _byse_playback(version, *, part_count=30):
+    """Byse API shape: 24-byte decoys plus the two real key halves."""
+    key = bytes(range(32))
+    iv = bytes(range(12))
+    payload = {"sources": [{"url": "https://media.example/1080.m3u8", "height": 1080}]}
+    parts = [_encode(bytes([index]) * 24) for index in range(part_count)]
+    parts[version - 1] = _encode(key[:16])
+    parts[part_count - version] = _encode(key[16:])
+    playback = {
+        "key_parts": parts,
+        "version": version,
+        "iv": _encode(iv),
+        "payload": _encode(AESGCM(key).encrypt(iv, json.dumps(payload).encode(), None)),
+    }
+    return playback, payload
+
+
+@pytest.mark.parametrize("version", [1, 4, 15, 16, 18, 20, 30])
+def test_filemoon_key_halves_follow_the_playback_version(version):
+    playback, payload = _byse_playback(version)
+    assert filemoon._decrypt_playback_data(playback) == payload
+
+
+def test_filemoon_falls_back_to_either_half_order_without_a_version():
+    playback, payload = _byse_playback(20)
+    del playback["version"]
+    assert filemoon._decrypt_playback_data(playback) == payload
+
+
+def test_filemoon_tries_the_second_payload_after_a_failed_first_one():
+    playback, payload = _byse_playback(16)
+    playback["iv2"], playback["payload2"] = playback["iv"], playback["payload"]
+    playback["payload"] = _encode(b"\0" * 64)
+    assert filemoon._decrypt_playback_data(playback) == payload
+
+
 @pytest.mark.parametrize(
     "radix,token,index",
     [(2, "10", 2), (10, "10", 10), (36, "z", 35), (62, "A", 36), (62, "Z", 61)],
@@ -222,3 +262,51 @@ def test_packed_player_preserves_unknown_or_empty_tokens():
 def test_filemoon_legacy_packed_player_uses_the_shared_unpacker():
     html = """eval(function(p,a,c,k,e,d){return p;}('0:[{1:"2"}]',36,3,'sources|file|https://media.example/video.m3u8'.split('|')))"""
     assert filemoon._try_extract_from_html(html) == "https://media.example/video.m3u8"
+
+
+def test_vidoza_and_megakino_raise_when_no_stream_is_found(monkeypatch):
+    from aniworld.extractors.provider import megakino, vidoza
+
+    page = SimpleNamespace(text="<html></html>", raise_for_status=lambda: None)
+    monkeypatch.setattr(vidoza.GLOBAL_SESSION, "get", lambda *a, **k: page)
+    monkeypatch.setattr(megakino, "_fetch_megakino_player_page", lambda *a, **k: "")
+    with pytest.raises(ValueError):
+        vidoza.get_direct_link_from_vidoza("https://videzz.net/embed-x.html")
+    with pytest.raises(ValueError):
+        megakino.get_direct_link_from_megakino("https://megakino.example/x")
+
+
+@pytest.mark.parametrize(
+    "slug,title,english",
+    [
+        ("example", "Example (English)", True),
+        ("bastille-day-englisch", "Bastille Day *ENGLISCH*", True),
+        ("example-english", "Example", True),
+        ("johnny-english", "Johnny English", False),
+        (
+            "johnny-english-man-lebt-nur-dreimal",
+            "Johnny English - Man lebt nur dreimal",
+            False,
+        ),
+    ],
+)
+def test_filmpalast_language_does_not_depend_on_title_access_order(
+    slug, title, english
+):
+    movie = FilmPalastEpisode(f"https://filmpalast.to/stream/{slug}")
+    movie._FilmPalastEpisode__html = f'<em itemprop="name">{title}</em>'
+    assert movie._is_english is english
+    assert movie.title_de == title
+    assert movie._is_english is english
+
+
+def test_filmpalast_challenge_page_is_not_parsed(monkeypatch):
+    from aniworld.models.common import http
+
+    page = SimpleNamespace(
+        text="Just a moment...", status_code=200, raise_for_status=lambda: None
+    )
+    monkeypatch.setattr(http.GLOBAL_SESSION, "get", lambda *a, **k: page)
+    movie = FilmPalastEpisode("https://filmpalast.to/stream/example")
+    with pytest.raises(http.CaptchaRequired):
+        _ = movie.title_de

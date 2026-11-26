@@ -6,13 +6,14 @@ from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 import certifi
 from niquests import Session
 from packaging.version import parse as parse_version
 
-from .env import CA_BUNDLE_ENV_VARS, initialize_app_env
+from .env import CA_BUNDLE_ENV_VARS, initialize_app_env, resolve_env_directory
 from .logger import get_logger
 
 VERSION = None
@@ -58,6 +59,11 @@ ANIWORLD_CONFIG_DIR = initialize_app_env(
     Path(__file__).resolve().parent / ".env.example",
     Path.home() / ".aniworld",
 )
+
+for key in CA_BUNDLE_ENV_VARS:
+    value = os.environ.get(key)
+    if value:
+        os.environ[key] = os.path.expanduser(value)
 
 CA_CERT_BUNDLE = next(
     (os.environ[key] for key in CA_BUNDLE_ENV_VARS if os.environ.get(key)),
@@ -407,6 +413,13 @@ ANIWORLD_EPISODE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+
+def normalize_aniworld_url(url: str) -> str:
+    """Canonical spelling of a validated AniWorld series, season, or episode URL."""
+    path = urlsplit(url.strip()).path.rstrip("/").lower()
+    return f"https://aniworld.to{path}"
+
+
 HANIME_TV_SERIES_PATTERN = re.compile(
     r"^https?://(?:www\.)?hanime\.tv/"
     r"(?:videos/hentai|hentai/video|playlists/[0-9a-z]+/video)/"
@@ -538,14 +551,20 @@ BURNINGSERIES_EPISODE_PATTERN = re.compile(
 
 # TODO: add many other directories and use them throughout the app
 
-# Determine mpv scripts directory
-# On Linux/macOS: ~/.config/mpv/scripts
-# On Windows: %APPDATA%\mpv\scripts
-if os.name == "nt":
-    MPV_CONFIG_DIR = Path(os.getenv("APPDATA")) / "mpv"
-else:
-    MPV_CONFIG_DIR = Path.home() / ".config" / "mpv"
 
+def _mpv_config_dir():
+    if os.name == "nt":
+        base = resolve_env_directory("APPDATA", Path.home() / "AppData" / "Roaming")
+    else:
+        base = resolve_env_directory("XDG_CONFIG_HOME", Path.home() / ".config")
+        value = os.environ.get("XDG_CONFIG_HOME", "")
+        if value and not Path(value).is_absolute():
+            # Some mpv builds otherwise read relative XDG paths in child processes.
+            os.environ["XDG_CONFIG_HOME"] = str(base)
+    return base / "mpv"
+
+
+MPV_CONFIG_DIR = _mpv_config_dir()
 MPV_SCRIPTS_DIR = MPV_CONFIG_DIR / "scripts"
 
 

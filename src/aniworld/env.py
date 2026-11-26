@@ -10,6 +10,16 @@ ENV_LINE_RE = re.compile(r"^([^#\n=]+?)=(.*)$")
 CA_BUNDLE_ENV_VARS = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE")
 
 
+def resolve_env_directory(name: str, default: Path) -> Path:
+    """Use an absolute environment directory, otherwise its platform default."""
+    value = os.environ.get(name, "")
+    if value.strip():
+        path = Path(value)
+        if path.is_absolute():
+            return path
+    return default
+
+
 def initialize_app_env(example_path: Path, default_dir: Path) -> Path:
     """Resolve the app directory and load its .env file.
 
@@ -22,6 +32,8 @@ def initialize_app_env(example_path: Path, default_dir: Path) -> Path:
     configured_dir = os.environ.get("ANIWORLD_INSTALL_FOLDER")
     if configured_dir is None and default_env_path.exists():
         configured_dir = dotenv_values(default_env_path).get("ANIWORLD_INSTALL_FOLDER")
+    if configured_dir is not None and not configured_dir.strip():
+        configured_dir = None
 
     app_dir = Path(configured_dir or default_dir).expanduser()
     if not app_dir.is_absolute():
@@ -42,6 +54,8 @@ def initialize_app_env(example_path: Path, default_dir: Path) -> Path:
 
 
 def merge_env(example_path: Path, env_path: Path):
+    example_path = Path(example_path).expanduser()
+    env_path = Path(env_path).expanduser()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     if not example_path.exists():
         if env_path.exists():
@@ -103,7 +117,7 @@ def persist_env_values(env_path: Path, updates: dict):
     survive a restart (e.g. the Discord bot config) while every other web-UI
     setting stays session-only.
     """
-    env_path = Path(env_path)
+    env_path = Path(env_path).expanduser()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     lines = env_path.read_text().splitlines() if env_path.exists() else []
 

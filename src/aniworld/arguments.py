@@ -190,6 +190,11 @@ def parse_args():
         action="store_true",
         help="Show extended command-line examples and exit",
     )
+    general.add_argument(
+        "--setup-ublock",
+        action="store_true",
+        help="Prepare uBlock Origin Lite for use with ANIWORLD_UBLOCK=1 and exit",
+    )
 
     # =========================
     # Playback / Download options
@@ -375,6 +380,32 @@ def parse_args():
         print(EXAMPLES)
         raise SystemExit(0)
 
+    if args.setup_ublock:
+        from .autodeps import install_ublock_lite
+
+        extension = install_ublock_lite()
+        if extension is None:
+            logger.error(
+                "uBlock Origin Lite is unavailable. Check the setup logs and ANIWORLD_NO_AUTO_INSTALL."
+            )
+            raise SystemExit(1)
+        print(f"[READY] uBlock Origin Lite at {extension}", flush=True)
+        raise SystemExit(0)
+
+    extractor = None
+    if args.provider_url is not None:
+        if not args.provider:
+            parser.error("--provider-url requires --provider")
+        if not args.provider_url.strip():
+            parser.error("--provider-url requires a URL")
+        from .extractors import provider_functions
+
+        extractor = provider_functions.get(
+            f"get_direct_link_from_{args.provider.lower()}"
+        )
+        if extractor is None:
+            parser.error(f"--provider-url is not supported for {args.provider}")
+
     if args.language:
         os.environ["ANIWORLD_LANGUAGE"] = args.language
 
@@ -397,10 +428,11 @@ def parse_args():
         os.environ["ANIWORLD_USE_STO_SEARCH"] = "1"
 
     if args.output:
+        output_path = os.path.expanduser(args.output)
         os.environ["ANIWORLD_DOWNLOAD_PATH"] = (
-            os.path.abspath(args.output)
-            if not os.path.isabs(args.output)
-            else args.output
+            os.path.abspath(output_path)
+            if not os.path.isabs(output_path)
+            else output_path
         )
 
     if args.anime4k:
@@ -429,7 +461,7 @@ def parse_args():
 
     if args.episode_file:
         try:
-            with open(args.episode_file, "r") as f:
+            with open(os.path.expanduser(args.episode_file), "r") as f:
                 for line in f:
                     u = line.strip()
                     if u:
@@ -439,29 +471,34 @@ def parse_args():
             logger.error(f"Failed to read episode file: {e}")
             sys.exit(1)
 
-    if args.provider_url and args.provider:
+    if extractor is not None:
         import ffmpeg
 
         from .config import PROVIDER_HEADERS_D
-        from .extractors import provider_functions
+        from .models.common.paths import resolve_download_path
 
-        provider_key = (args.provider or "").strip()
+        provider_key = args.provider
         headers = PROVIDER_HEADERS_D.get(provider_key, {})
+        input_options = {}
+        if headers:
+            input_options["headers"] = "".join(
+                f"{k}: {v}\r\n" for k, v in headers.items()
+            )
 
-        headers_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        try:
+            direct_link = extractor(args.provider_url)
+            if not isinstance(direct_link, str) or not direct_link.strip():
+                raise ValueError("the provider returned no stream URL")
+        except Exception as exc:
+            logger.error("Could not resolve a stream from %s: %s", provider_key, exc)
+            sys.exit(1)
 
-        direct_link = provider_functions[
-            f"get_direct_link_from_{provider_key.lower()}"
-        ](args.provider_url)
-
-        download_dir = os.getenv("ANIWORLD_DOWNLOAD_PATH", ".")
-        output_path = os.path.join(download_dir, "input.mkv")
+        download_dir = resolve_download_path()
+        download_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(download_dir / "input.mkv")
 
         (
-            ffmpeg.input(
-                direct_link,
-                headers=headers_str if headers_str else None,
-            )
+            ffmpeg.input(direct_link, **input_options)
             .output(
                 output_path,
                 c="copy",

@@ -1,6 +1,6 @@
 [project]
 name = "aniworld"
-version = "5.3.1"
+version = "5.6.0"
 authors = [{ name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" }]
 maintainers = [
   { name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" },
@@ -40,12 +40,13 @@ epub = [
 ]
 sso = [
   "authlib", # >=3.10
+  "requests", # Authlib's Flask OAuth client
 ]
 discord = [
   "discord.py", # optional Discord request bot
 ]
 test = ["pytest"]
-all = ["authlib", "discord.py", "Pillow"]
+all = ["authlib", "requests", "discord.py", "Pillow"]
 
 
 [project.urls]

@@ -22,9 +22,10 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from ..logger import get_logger
-from ..providers import resolve_provider
+from ..models.common.numbering import downloaded_episode_owners
+from ..providers import normalize_url, resolve_provider
 from . import db, paths, schedule
-from .media import folder_matches_title
+from .media import episode_files_in_folder, folder_matches_title
 from .settings_store import (
     autosync_cron_schedule,
     autosync_enabled,
@@ -243,35 +244,18 @@ def episodes_in_folder(folder):
     look complete because the English copy next to it has the episode, and would
     then never be filled in.
     """
-    from .media import EPISODE_RE
-
-    found = set()
-    try:
-        files = folder.rglob("*")
-    except OSError:
-        return found
-
-    for file in files:
-        try:
-            if not file.is_file():
-                continue
-        except OSError:
-            continue
-        match = EPISODE_RE.search(file.name)
-        if match:
-            found.add((int(match.group(1)), int(match.group(2))))
-    return found
+    return set(episode_files_in_folder(folder))
 
 
-def episodes_on_disk(row, titles):
-    """Every (season, episode) of this series already in its folder.
+def files_on_disk(row, titles):
+    """Episode files of this series already in its folder, keyed by (season, episode).
 
     Matching is done on folder names rather than by rendering the naming
     template, so it keeps working after the template changes. A series that is
     not on disk at all simply has nothing yet.
     """
     titles = [title for title in titles if title]
-    found = set()
+    found = {}
     for base in _bases(row):
         try:
             children = list(base.iterdir()) if base.is_dir() else []
@@ -281,8 +265,14 @@ def episodes_on_disk(row, titles):
             if not folder.is_dir() or folder.name.startswith("."):
                 continue
             if any(folder_matches_title(folder.name, title) for title in titles):
-                found |= episodes_in_folder(folder)
+                for key, files in episode_files_in_folder(folder).items():
+                    found.setdefault(key, []).extend(files)
     return found
+
+
+def episodes_on_disk(row, titles):
+    """Every (season, episode) of this series already in its folder."""
+    return set(files_on_disk(row, titles))
 
 
 def _where(row):
@@ -327,23 +317,39 @@ def wanted_episodes(series, have, start, language):
         if season_number is None or season_number < start[0]:
             continue
 
-        # Sites that read the flags off the season page, others queue blind
+        # Sites that read the flags off the season page, others queue blind.
+        # AniWorld keys them by episode URL, SerienStream by the URL's index.
         flags = getattr(season, "episode_languages", None) or {}
 
-        for episode in season.episodes:
+        episodes = season.episodes
+        # Real site episodes know both their English-title and seasonal number,
+        # so match files through the shared numbering rules (and the source URL
+        # recorded in the file) instead of guessing from one number.
+        owned = None
+        if any(hasattr(episode, "season_episode_number") for episode in episodes):
+            owned = set(downloaded_episode_owners(episodes, have).values())
+
+        for episode in episodes:
+            index = _numbers(episode.url)
             number = episode.episode_number
             if number is None:
-                numbers = _numbers(episode.url)
-                number = numbers[1] if numbers else None
+                number = index[1] if index else None
             if number is None:
                 continue
             if (season_number, number) < start:
                 continue
-            if (season_number, number) in have:
+            if owned is not None:
+                if episode.url in owned:
+                    continue
+            elif (season_number, number) in have:
                 continue
-            if flags and language not in flags.get(number, ()):
-                not_out_yet += 1
-                continue
+            if flags:
+                row_flags = flags.get(episode.url)
+                if row_flags is None and index:
+                    row_flags = flags.get(index[1])
+                if language not in (row_flags or ()):
+                    not_out_yet += 1
+                    continue
             wanted.append(episode.url)
     return wanted, not_out_yet
 
@@ -361,7 +367,7 @@ def sync_series(row, provider_name):
 
     Reasons are shown verbatim on the Auto-Sync page, so they read as sentences.
     """
-    series_url = row["series_url"]
+    series_url = normalize_url(row["series_url"])
     language = row["language"]
     report = {
         "id": row.get("id"),
@@ -382,7 +388,7 @@ def sync_series(row, provider_name):
     title = getattr(series, "title", None) or row.get("title")
     report["title"] = title or report["title"]
 
-    have = episodes_on_disk(row, [title, row.get("title")])
+    have = files_on_disk(row, [title, row.get("title")])
     start = (int(row.get("start_season") or 0), int(row.get("start_episode") or 1))
     wanted, not_out_yet = wanted_episodes(series, have, start, language)
 
