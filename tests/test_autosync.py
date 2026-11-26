@@ -5,6 +5,7 @@ No site is ever contacted: series objects are stand-ins.
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -574,6 +575,17 @@ def test_nothing_due_runs_nothing(checked):
     track()
     autosync._tick()
     assert checked == []
+
+    def season_cls(self, url):
+        return SimpleNamespace(episodes=[], season_number=int(url.rsplit("-", 1)[1]))
+
+    def episode_cls(self, url, season=None):
+        season_number, number = autosync._numbers(url)
+        return SimpleNamespace(
+            url=url,
+            episode_number=number,
+            season=season or SimpleNamespace(season_number=season_number),
+        )
 
 
 def test_the_nap_shrinks_for_a_preset_series(monkeypatch):

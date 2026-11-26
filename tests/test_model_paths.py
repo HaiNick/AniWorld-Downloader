@@ -1,5 +1,6 @@
 """Backend download roots share one policy without changing CLI destinations."""
 
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -159,10 +160,174 @@ def test_changing_selected_root_updates_complete_video_path(
     assert episode._episode_path != old_path
 
 
+@pytest.mark.parametrize(
+    "kwargs,season,folder,name",
+    [
+        ({}, 0, "Season 00", "Example S00E01"),
+        ({"season_number": 0}, 0, "Season 00", "Example S00E01"),
+        ({"season_number": 2}, 2, "Season 02", "Example S02E01"),
+    ],
+)
+def test_burningseries_season_zero_is_not_season_one(
+    home, monkeypatch, kwargs, season, folder, name
+):
+    series = SimpleNamespace(title_cleaned="Example")
+    monkeypatch.setattr(
+        BurningSeriesEpisode, "series", property(lambda self: series), raising=False
+    )
+    monkeypatch.setenv("ANIWORLD_NAMING_TEMPLATE", "{title}.mkv")
+    episode = BurningSeriesEpisode(
+        "https://bs.to/serie/example/0/1-example/de", selected_path="~/M", **kwargs
+    )
+    assert episode.season_number == season
+    assert episode._episode_path == home / "M" / "Example" / folder / f"{name}.mkv"
+
+
 def test_relative_cli_output_stays_beneath_working_directory(model, home, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["aniworld", "--output", "./downloads"])
     arguments.parse_args()
     assert Path(model().selected_path) == Path.cwd() / "downloads"
+
+
+@pytest.mark.parametrize(
+    "value,folder", [("~", ""), ("~/Videos with spaces", "Videos with spaces")]
+)
+def test_quoted_cli_output_expands_tilde(home, monkeypatch, value, folder):
+    monkeypatch.setattr(sys, "argv", ["aniworld", "--output", value])
+
+    arguments.parse_args()
+
+    assert Path(os.environ["ANIWORLD_DOWNLOAD_PATH"]) == home / folder
+
+
+def test_absolute_cli_output_preserves_parent_components(home, monkeypatch, tmp_path):
+    destination = tmp_path / "Media with spaces" / ".." / "Videos"
+    monkeypatch.setattr(sys, "argv", ["aniworld", "--output", str(destination)])
+
+    arguments.parse_args()
+
+    assert os.environ["ANIWORLD_DOWNLOAD_PATH"] == str(destination)
+
+
+@pytest.mark.parametrize("path_type", ["tilde", "relative", "absolute"])
+def test_cli_episode_file_loads_urls(home, monkeypatch, path_type):
+    base = Path.cwd() if path_type == "relative" else home
+    episode_file = base / "Episode lists" / "urls.txt"
+    episode_file.parent.mkdir()
+    urls = [
+        "https://aniworld.to/anime/stream/example/staffel-1/episode-1",
+        "https://aniworld.to/anime/stream/example/staffel-1/episode-2",
+    ]
+    episode_file.write_text(f"\n  {urls[0]}  \n\n{urls[1]}\n")
+    if path_type == "tilde":
+        value = "~/Episode lists/urls.txt"
+    elif path_type == "relative":
+        value = str(episode_file.relative_to(Path.cwd()))
+    else:
+        value = str(episode_file)
+    positional_url = "https://aniworld.to/anime/stream/example/staffel-1/episode-3"
+    monkeypatch.setattr(
+        sys, "argv", ["aniworld", positional_url, "--episode-file", value]
+    )
+
+    args = arguments.parse_args()
+
+    assert args.url == [positional_url, *urls]
+
+
+@pytest.fixture
+def direct_provider_download(monkeypatch):
+    import ffmpeg
+
+    from aniworld.extractors import provider_functions
+
+    stream = Mock()
+    monkeypatch.setattr(ffmpeg, "input", Mock(return_value=stream))
+    monkeypatch.setitem(
+        provider_functions,
+        "get_direct_link_from_voe",
+        lambda url: "https://example.invalid/video.mp4",
+    )
+
+    def run_ffmpeg():
+        destination = Path(stream.output.call_args.args[0])
+        assert destination.parent.is_dir()
+
+    stream.output.return_value.run.side_effect = run_ffmpeg
+
+    def download(*options):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "aniworld",
+                "--provider",
+                "VOE",
+                "--provider-url",
+                "https://voe.sx/e/example",
+                *options,
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            arguments.parse_args()
+        assert exc.value.code == 0
+        stream.output.return_value.run.assert_called_once_with()
+        return Path(stream.output.call_args.args[0])
+
+    return download
+
+
+@pytest.mark.parametrize(
+    "setting,folder",
+    [
+        (None, "Downloads"),
+        ("", "Downloads"),
+        (" \t ", "Downloads"),
+        ("Media/Videos", "Media/Videos"),
+        ("~/Media/Videos", "Media/Videos"),
+        ("  ~/Media with spaces/Videos  ", "Media with spaces/Videos"),
+    ],
+)
+def test_direct_provider_download_resolves_configured_root(
+    home, monkeypatch, direct_provider_download, setting, folder
+):
+    if setting is None:
+        monkeypatch.delenv("ANIWORLD_DOWNLOAD_PATH", raising=False)
+    else:
+        monkeypatch.setenv("ANIWORLD_DOWNLOAD_PATH", setting)
+
+    assert direct_provider_download() == home / folder / "input.mkv"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_direct_provider_download_preserves_absolute_root(
+    home, tmp_path, monkeypatch, direct_provider_download, existing
+):
+    destination = tmp_path / "Absolute media" / "Videos"
+    if existing:
+        destination.mkdir(parents=True)
+    monkeypatch.setenv("ANIWORLD_DOWNLOAD_PATH", str(destination))
+
+    assert direct_provider_download() == destination / "input.mkv"
+
+
+@pytest.mark.parametrize("path_type", ["relative", "tilde", "absolute"])
+def test_direct_provider_download_uses_cli_output(
+    home, tmp_path, monkeypatch, direct_provider_download, path_type
+):
+    if path_type == "relative":
+        value = "Media with spaces/Videos"
+        destination = Path.cwd() / value
+    elif path_type == "tilde":
+        value = "~/Media with spaces/Videos"
+        destination = home / "Media with spaces" / "Videos"
+    else:
+        destination = tmp_path / "Absolute media" / "Videos"
+        value = str(destination)
+    monkeypatch.setenv("ANIWORLD_DOWNLOAD_PATH", "~/ignored")
+
+    assert direct_provider_download("--output", value) == destination / "input.mkv"
+    assert not (home / "ignored").exists()
 
 
 def test_mangafire_download_uses_expanded_selected_path(home, monkeypatch):

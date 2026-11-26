@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install patchright && \
     python -m patchright install chromium --no-shell && \
     rm -rf /ms-playwright/ffmpeg-* && \
-    find /ms-playwright -name "*.pak*" | grep -vE "(resources|chrome_100|chrome_200|de|en-US|en-GB)\.pak" | xargs -r rm -f && \
+    find /ms-playwright -name "*.pak*" | grep -vE "/(resources|chrome_(100|200)_percent|de|en-US|en-GB)\.pak$" | xargs -r rm -f && \
     chmod -R a+rX /ms-playwright && \
     rm -rf /tmp/*
 
@@ -61,6 +61,13 @@ COPY src/ /build/src/
 # this pass installs just the app module now that src/ is present.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --force-reinstall --no-deps .[all]
+
+# Prepare the optional browser extension in the image, outside the user's config volume.
+RUN ANIWORLD_INSTALL_FOLDER=/tmp/aniworld-ublock-setup aniworld --setup-ublock && \
+    package_dir="$(python -c 'from sysconfig import get_path; print(get_path("purelib"))')/aniworld" && \
+    mv /tmp/aniworld-ublock-setup/ublock-lite "$package_dir/ublock-lite" && \
+    chmod -R a+rX "$package_dir/ublock-lite" && \
+    rm -rf /tmp/aniworld-ublock-setup
 
 # Clean up python bytecodes and packaging tools in builder venv
 RUN find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + && \
@@ -101,7 +108,9 @@ RUN adduser --disabled-password --gecos "" aniworld \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends --option=Apt::Retries=3 \
+    tini \
     xvfb \
+    xauth \
     ffmpeg \
     libnss3 \
     libnspr4 \
@@ -133,21 +142,26 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     ANIWORLD_DOWNLOAD_PATH=/app/Downloads \
     ANIWORLD_MENU_DOWNLOAD_ONLY=1 \
-    DISPLAY=:99 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 # Ensure Downloads, config, and browser dirs are writable by the unprivileged user.
 # /ms-playwright needs write access so patchright can verify/update its install
 # at runtime without blocking startup with a failing subprocess call.
-RUN chown -R aniworld:aniworld /app/Downloads /home/aniworld/.aniworld /ms-playwright
+# Chromium also writes generated rules into the unpacked uBlock extension directory.
+RUN package_dir="$(python -c 'from sysconfig import get_path; print(get_path("purelib"))')/aniworld" && \
+    chown -R aniworld:aniworld /app/Downloads /home/aniworld/.aniworld /ms-playwright "$package_dir/ublock-lite"
 
 USER aniworld
 
+# Fail the build if the runtime is missing an SSO client dependency.
+RUN python -c "from authlib.integrations.flask_client import OAuth"
+
 EXPOSE 8080
 
-# This command will be inherited by the final stage
-CMD ["sh", "-c", "rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080"]
+# Wait for a working display before starting the app, including custom commands.
+ENTRYPOINT ["tini", "-g", "--", "xvfb-run", "-a", "-s", "-screen 0 1280x720x24"]
+CMD ["aniworld", "--web-ui", "--web-expose", "--no-browser", "--web-port", "8080"]
 
 
 # ==========================================
@@ -164,7 +178,6 @@ ENV PATH="/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
     PYTHONUNBUFFERED=1 \
     ANIWORLD_DOWNLOAD_PATH=/app/Downloads \
     ANIWORLD_MENU_DOWNLOAD_ONLY=1 \
-    DISPLAY=:99 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
@@ -174,4 +187,5 @@ USER aniworld
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080"]
+ENTRYPOINT ["tini", "-g", "--", "xvfb-run", "-a", "-s", "-screen 0 1280x720x24"]
+CMD ["aniworld", "--web-ui", "--web-expose", "--no-browser", "--web-port", "8080"]

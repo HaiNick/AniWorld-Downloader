@@ -81,11 +81,12 @@ def expected_body_length(response):
     `Content-Length`, or a compressed body whose decoded size legitimately
     differs from the header.
     """
-    encoding = (response.headers.get("Content-Encoding") or "identity").lower()
+    headers = getattr(response, "headers", None) or {}
+    encoding = (headers.get("Content-Encoding") or "identity").lower()
     if encoding not in ("", "identity"):
         return None
     try:
-        return int(response.headers["Content-Length"])
+        return int(headers["Content-Length"])
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -243,6 +244,11 @@ def _parse_master_playlist(text, base_url):
             )
 
     return variants, renditions
+
+
+def _best_variant(variants):
+    """Pick the highest-bandwidth variant of a master playlist."""
+    return max(variants, key=lambda item: item.bandwidth)
 
 
 def _select_audio_rendition(renditions, group_id, preferred_lang):
@@ -437,6 +443,18 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
     FFmpeg picks the right demuxer: `.mp4` for fMP4 (an EXT-X-MAP init segment
     is present), `.ts` for MPEG-TS.
     """
+    common = _common()
+    queue_id = common._download_queue_id()
+    cancelled = threading.Event()
+
+    def check_cancelled():
+        if queue_id is not None and (
+            cancelled.is_set() or common._force_cancel_requested(queue_id)
+        ):
+            cancelled.set()
+            raise common.DownloadCancelled("Download cancelled")
+
+    check_cancelled()
     text = _fetch_text(playlist_url, headers)
     if "#EXT-X-STREAM-INF" in text:
         raise HLSUnsupported("expected a media playlist, got a master playlist")
@@ -453,6 +471,7 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
         with key_cache_lock:
             if uri in key_cache:
                 return key_cache[uri]
+        check_cancelled()
         data = _fetch_bytes(uri, headers)
         if len(data) != 16:
             raise HLSUnsupported(f"AES key has {len(data)} bytes, expected 16")
@@ -461,6 +480,7 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
         return data
 
     def _fetch_segment(segment):
+        check_cancelled()
         uri, key, sequence = segment
         data = _fetch_bytes(uri, headers)
         if key is None:
@@ -471,6 +491,7 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
 
     with open(output_path, "wb") as handle:
         if init_uri:
+            check_cancelled()
             handle.write(_fetch_bytes(init_uri, headers))
 
         if concurrency == 1:
@@ -478,6 +499,7 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
                 chunk = _fetch_segment(segment)
                 handle.write(chunk)
                 tracker.advance(len(chunk))
+            check_cancelled()
             return output_path
 
         # Keep a bounded window of in-flight segments so memory stays flat
@@ -491,13 +513,23 @@ def _download_playlist(playlist_url, headers, temp_prefix, suffix, tracker_facto
                 pending.append(pool.submit(_fetch_segment, segments[next_index]))
                 next_index += 1
 
-            while pending:
-                chunk = pending.popleft().result()
-                handle.write(chunk)
-                tracker.advance(len(chunk))
-                if next_index < len(segments):
-                    pending.append(pool.submit(_fetch_segment, segments[next_index]))
-                    next_index += 1
+            try:
+                while pending:
+                    chunk = pending.popleft().result()
+                    if cancelled.is_set():
+                        check_cancelled()
+                    handle.write(chunk)
+                    tracker.advance(len(chunk))
+                    if next_index < len(segments):
+                        pending.append(
+                            pool.submit(_fetch_segment, segments[next_index])
+                        )
+                        next_index += 1
+                check_cancelled()
+            except common.DownloadCancelled:
+                for future in pending:
+                    future.cancel()
+                raise
 
     return output_path
 
@@ -520,7 +552,7 @@ def download_hls_parallel(
     if get_concurrency() == 1:
         raise HLSUnsupported("parallel HLS download disabled")
 
-    temp_prefix = Path(temp_prefix)
+    temp_prefix = Path(temp_prefix).expanduser()
     headers = _default_headers(headers)
 
     master_text = _fetch_text(stream_url, headers)
@@ -535,7 +567,7 @@ def download_hls_parallel(
         if not variants:
             raise HLSUnsupported("master playlist has no variants")
 
-        variant = max(variants, key=lambda item: item.bandwidth)
+        variant = _best_variant(variants)
         video_playlist = variant.uri
 
         rendition = _select_audio_rendition(
@@ -547,6 +579,15 @@ def download_hls_parallel(
                 f"[HLS] separate audio rendition: {rendition.name or rendition.language}"
             )
 
+    return _download_hls_playlists(
+        video_playlist, audio_playlist, temp_prefix, headers, label
+    )
+
+
+def _download_hls_playlists(
+    video_playlist, audio_playlist, temp_prefix, headers, label
+):
+    """Fetch resolved video and audio playlists, cleaning up on failure."""
     written = []
     try:
         _publish_progress(percent=0.0, time="", speed="", bandwidth="", active=True)
@@ -581,7 +622,7 @@ def download_hls_parallel(
 
 def cleanup_temp_files(temp_prefix):
     """Remove any partial files a previous HLS attempt may have left behind."""
-    temp_prefix = Path(temp_prefix)
+    temp_prefix = Path(temp_prefix).expanduser()
     for suffix in (
         ".hls_video.ts",
         ".hls_video.mp4",

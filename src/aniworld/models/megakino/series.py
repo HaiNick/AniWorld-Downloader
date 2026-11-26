@@ -81,7 +81,7 @@ def get_megakino_domain():
 class MegaKinoEpisode:
     def __init__(
         self,
-        url=str,
+        url,
         selected_path=None,
         selected_language=None,
         selected_provider=None,
@@ -906,6 +906,7 @@ class MegaKinoEpisode:
         normalized = language.strip().lower()
         if normalized in {"german", "deutsch", "german dub"}:
             return "German Dub"
+        # MegaKino only serves German audio; English requests map to it on purpose (27acb93).
         if normalized in {"english", "englisch", "english dub"}:
             return "German Dub"
 
@@ -996,14 +997,7 @@ class MegaKinoEpisode:
         if provider_data is None:
             return None
 
-        if isinstance(provider_data, ProviderData):
-            provider_dict = provider_data.get((Audio.GERMAN, Subtitles.NONE))
-            if language == "English Dub":
-                provider_dict = (
-                    provider_data.get((Audio.ENGLISH, Subtitles.NONE)) or provider_dict
-                )
-        else:
-            provider_dict = provider_data.get((Audio.GERMAN, Subtitles.NONE))
+        provider_dict = provider_data.get((Audio.GERMAN, Subtitles.NONE))
 
         if not provider_dict:
             return None
@@ -1022,12 +1016,7 @@ class MegaKinoEpisode:
         if provider_data is None:
             return ()
 
-        if isinstance(provider_data, ProviderData):
-            provider_dict = provider_data.get((Audio.ENGLISH, Subtitles.NONE))
-            if language != "English Dub":
-                provider_dict = provider_data.get((Audio.GERMAN, Subtitles.NONE))
-        else:
-            provider_dict = provider_data.get((Audio.GERMAN, Subtitles.NONE))
+        provider_dict = provider_data.get((Audio.GERMAN, Subtitles.NONE))
 
         return tuple(provider_dict.keys()) if provider_dict else ()
 
@@ -1040,7 +1029,7 @@ class MegaKinoEpisode:
     @property
     def provider_url(self):
         if self.__provider_url is None:
-            self.__provider_url = GLOBAL_SESSION.get(self.redirect_url).url
+            self.__provider_url = GLOBAL_SESSION.get(self.redirect_url, timeout=30).url
         return self.__provider_url
 
     @property

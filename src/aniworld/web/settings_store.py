@@ -255,6 +255,7 @@ def _preview_episode(root, language):
         ),
         season=SimpleNamespace(season_number=1),
         episode_number=3,
+        title_en="",
         selected_path=str(root),
         selected_language=language,
     )
@@ -399,6 +400,7 @@ def read_settings():
         "manga_download_path": str(manga_path) if manga_path else "",
         "lang_separation": paths.lang_separation_enabled(),
         "disable_english_sub": english_sub_disabled(),
+        "season_episode_numbers": _flag("ANIWORLD_SEASON_EPISODE_NUMBERS"),
         "show_all_languages": show_all_languages(),
         **{f"enable_{site}": state for site, state in enabled_sites().items()},
         "enable_library": library_enabled(),
@@ -432,6 +434,7 @@ def read_settings():
 _BOOL_SETTINGS = {
     "lang_separation": "ANIWORLD_LANG_SEPARATION",
     "disable_english_sub": "ANIWORLD_DISABLE_ENGLISH_SUB",
+    "season_episode_numbers": "ANIWORLD_SEASON_EPISODE_NUMBERS",
     "show_all_languages": "ANIWORLD_SHOW_ALL_LANGUAGES",
     "enable_library": "ANIWORLD_ENABLE_LIBRARY",
     "enable_autosync": "ANIWORLD_ENABLE_AUTOSYNC",
@@ -599,6 +602,10 @@ def _env_sections():
                     _one_or_zero(paths.lang_separation_enabled()),
                 ),
                 ("ANIWORLD_DISABLE_ENGLISH_SUB", _one_or_zero(english_sub_disabled())),
+                (
+                    "ANIWORLD_SEASON_EPISODE_NUMBERS",
+                    _one_or_zero(_flag("ANIWORLD_SEASON_EPISODE_NUMBERS")),
+                ),
                 ("ANIWORLD_SHOW_ALL_LANGUAGES", _one_or_zero(show_all_languages())),
                 (
                     "ANIWORLD_MOVIE_FOLDER",

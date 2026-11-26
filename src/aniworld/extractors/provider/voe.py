@@ -8,13 +8,16 @@ import time
 from urllib.parse import urlparse
 
 import niquests
+from curl_cffi import requests
 
 logger = logging.getLogger(__name__)
 
 try:
+    from ...autodeps import ChromiumDependencyError
     from ...config import DEFAULT_USER_AGENT, GLOBAL_SESSION, PROVIDER_HEADERS_D
     from ...playwright.captcha import is_captcha_page, solve_captcha
 except ImportError:
+    from aniworld.autodeps import ChromiumDependencyError
     from aniworld.config import DEFAULT_USER_AGENT, GLOBAL_SESSION, PROVIDER_HEADERS_D
     from aniworld.playwright.captcha import is_captcha_page, solve_captcha
 
@@ -25,7 +28,8 @@ REDIRECT_PATTERN = re.compile(r"""['"](\s*https?://[^'"<>\s]+/e/[^'"<>\s]+)['"]"
 B64_PATTERN = re.compile(r"var a168c='([^']+)'")
 HLS_PATTERN = re.compile(r"'hls': '(?P<hls>[^']+)'")
 VOE_SCRIPT_PATTERN = re.compile(
-    r'<script type="application/json">\s*"(?:\\.|[^"\\])*"\s*</script>', re.DOTALL
+    r'<script\b[^>]*\btype\s*=\s*["\']application/json["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL,
 )
 JUNK_PARTS = ["@$", "^^", "~@", "%?", "*~", "!!", "#&"]
 # Any direct playlist URL, used as a last-resort fallback.
@@ -33,30 +37,15 @@ M3U8_URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+?\.m3u8[^\s'\"<>]*")
 
 
 def _voe_get(url, headers, timeout):
-    """Fetch a VOE URL and return (text, final_url, status_code).
-
-    Prefers curl_cffi with a real Chrome TLS fingerprint so we pass voe.sx's
-    Cloudflare gate (the plain niquests session gets the challenge page instead,
-    which is why the source could not be found). Falls back to the shared
-    session when curl_cffi isn't installed.
-    """
-    try:
-        from curl_cffi import requests as _curl_requests
-
-        resp = _curl_requests.get(
-            url,
-            headers=headers,
-            impersonate="chrome124",
-            allow_redirects=True,
-            timeout=timeout,
-        )
-        return resp.text, str(resp.url), resp.status_code
-    except ImportError:
-        pass
-    except Exception as exc:
-        logger.debug(f"VOE curl_cffi fetch failed ({exc}); using niquests")
-
-    resp = GLOBAL_SESSION.get(url, headers=headers, timeout=timeout)
+    """Fetch with Chrome's TLS fingerprint and reuse CAPTCHA session cookies."""
+    resp = requests.get(
+        url,
+        headers=headers,
+        cookies=GLOBAL_SESSION.cookies,
+        impersonate="chrome",
+        timeout=timeout,
+    )
+    GLOBAL_SESSION.cookies.update(resp.cookies.jar)
     return resp.text, str(resp.url), resp.status_code
 
 
@@ -103,26 +92,23 @@ def decode_voe_string(encoded):
 
 def extract_voe_source_from_html(html):
     """Extract VOE video source — tries all known encoding variants."""
-    # Variant 1: <script type="application/json"> with encoded payload
-    try:
-        script_blocks = re.findall(
-            r'<script\s+type=["\']application/json["\']>(.*?)</script>', html, re.DOTALL
-        )
-        for script_block in script_blocks:
-            encoded_text = script_block.strip()
-            if encoded_text.startswith('"') and encoded_text.endswith('"'):
-                encoded_text = encoded_text[1:-1]
-            try:
-                decoded = decode_voe_string(
-                    encoded_text.encode().decode("unicode_escape")
-                )
-                source = decoded.get("source")
-                if source:
-                    return source
-            except (ValueError, UnicodeDecodeError):
+    # VOE serves both a JSON string and an array containing encoded strings.
+    for script_block in VOE_SCRIPT_PATTERN.findall(html):
+        try:
+            payload = json.loads(script_block)
+        except ValueError:
+            continue
+        encoded_strings = payload if isinstance(payload, list) else [payload]
+        for encoded in encoded_strings:
+            if not isinstance(encoded, str):
                 continue
-    except Exception:
-        pass
+            try:
+                decoded = decode_voe_string(encoded)
+                source = decoded.get("source") if isinstance(decoded, dict) else None
+                if isinstance(source, str) and source:
+                    return source
+            except ValueError:
+                continue
 
     # Variant 2: var a168c='<encoded>' pattern
     try:
@@ -188,7 +174,7 @@ def get_direct_link_from_voe(embeded_voe_link, headers=None, max_retries=3, time
                 )
                 time.sleep(wait_time)
 
-            # First request to VOE (curl_cffi impersonation, niquests fallback)
+            # Use the same static client before and after a CAPTCHA fallback.
             html, _final, status = fetch(embeded_voe_link)
 
             # Captcha on VOE page -> solve and retry this request
@@ -223,7 +209,7 @@ def get_direct_link_from_voe(embeded_voe_link, headers=None, max_retries=3, time
                     m3u8 = M3U8_URL_PATTERN.search(html2)
                     if m3u8:
                         return m3u8.group(0)
-                except _VOEUnavailable:
+                except (_VOEUnavailable, ChromiumDependencyError):
                     raise
                 except Exception as err:
                     logger.debug(f"VOE redirect fetch failed: {err}")
@@ -235,7 +221,7 @@ def get_direct_link_from_voe(embeded_voe_link, headers=None, max_retries=3, time
 
             raise ValueError("No VOE video source found in page.")
 
-        except _VOEUnavailable:
+        except (_VOEUnavailable, ChromiumDependencyError):
             raise
         except (niquests.RequestException, Exception) as err:
             if attempt == max_retries - 1:
@@ -266,7 +252,7 @@ def get_preview_image_link_from_voe(embeded_voe_link, headers=None):
         if not redirect_match:
             raise ValueError("No redirect URL found in VOE response.")
 
-        redirect_url = redirect_match.group(0)
+        redirect_url = redirect_match.group(1).strip()
         image_url = f"{redirect_url.replace('/e/', '/cache/')}_storyboard_L2.jpg"
 
         head_resp = GLOBAL_SESSION.head(

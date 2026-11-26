@@ -2,7 +2,6 @@ import os
 import re
 from collections import defaultdict
 from html import unescape
-from pathlib import Path
 from urllib.parse import urlparse
 
 from ...config import (
@@ -13,6 +12,7 @@ from ...config import (
     NAMING_TEMPLATE,
     build_provider_attempt_order,
     logger,
+    normalize_aniworld_url,
 )
 from ..common import ProviderData, check_downloaded
 from ..common.common import (
@@ -25,6 +25,8 @@ from ..common.common import (
     watch as episode_watch,
 )
 from ..common.extraction import resolve_stream_url
+from ..common.naming import existing_numbered_episode_path
+from ..common.numbering import episode_number_from_title
 from ..common.paths import resolve_download_path
 
 
@@ -98,13 +100,14 @@ class AniworldEpisode:
         if not self.is_valid_aniworld_episode_url(url):
             raise ValueError(f"Invalid AniWorld episode URL: {url}")
 
-        self.url = url
+        self.url = normalize_aniworld_url(url)
         self._series = series
         self._season = season
 
         self.__title_de = title_de
         self.__title_en = title_en
-        self.__episode_number = episode_number
+        self.__season_episode_number = episode_number
+        self.__episode_number = None
 
         self.__selected_path_param = selected_path
         self.__selected_language_param = selected_language
@@ -121,8 +124,6 @@ class AniworldEpisode:
 
         # https://jellyfin.org/docs/general/server/media/shows/#organization
         self.__base_folder = None
-        self.__folder_path = None
-        self.__file_name = None
         self.__file_extension = None
         self.__episode_path = None
 
@@ -143,9 +144,9 @@ class AniworldEpisode:
         # or
         # https://aniworld.to/anime/stream/highschool-dxd/filme/film-1
 
-        url = url.strip()
-
-        return bool(ANIWORLD_EPISODE_PATTERN.match(url))
+        return isinstance(url, str) and bool(
+            ANIWORLD_EPISODE_PATTERN.fullmatch(url.strip())
+        )
 
     @property
     def redirect_url(self):
@@ -183,101 +184,36 @@ class AniworldEpisode:
     def stream_url(self):
         return resolve_stream_url(self)
 
-    # TODO: add this into a common base class
     @property
     def _base_folder(self):
-        if self.__base_folder is None:
-            naming_template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
-            parts = naming_template.split("/")
-            if len(parts) <= 1:
-                self.__base_folder = Path(self.selected_path)
-            else:
-                folder_str = parts[0].format(
-                    title=self.series.title_cleaned,
-                    year=self.series.release_year,
-                    imdbid=self.series.imdb,
-                    season=f"{self.season.season_number:02d}",
-                    episode=f"{self.episode_number:03d}",
-                    language=self.selected_language,
-                    resolution=getattr(self, "_resolution", "unknown"),
-                )
-                self.__base_folder = Path(self.selected_path) / folder_str
+        _ = self._episode_path
         return self.__base_folder
 
     @property
     def _folder_path(self):
-        if self.__folder_path is None:
-            naming_template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
-            parts = naming_template.split("/")
-            if len(parts) <= 2:
-                # No season subfolder (template is "file" or "folder/file")
-                self.__folder_path = self._base_folder
-            else:
-                folder_str = parts[1].format(
-                    title=self.series.title_cleaned,
-                    year=self.series.release_year,
-                    imdbid=self.series.imdb,
-                    season=f"{self.season.season_number:02d}",
-                    episode=f"{self.episode_number:03d}",
-                    language=self.selected_language,
-                    resolution=getattr(self, "_resolution", "unknown"),
-                )
-                self.__folder_path = self._base_folder / folder_str
-        return self.__folder_path
+        return self._episode_path.parent
 
     @property
     def _file_name(self):
-        if self.__file_name is None:
-            naming_template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
-            try:
-                file_template = naming_template.split("/")[-1]
-            except IndexError:
-                file_template = f"{self.series.title_cleaned} S{self.season.season_number:02d}E{self.episode_number:03d}.mkv"
-
-            # Remove extension
-            if "." in file_template:
-                file_template = ".".join(file_template.split(".")[:-1])
-
-            # Replace %style% with {style} for compatibility
-            file_template = file_template.replace("%title%", "{title}")
-            file_template = file_template.replace("%year%", "{year}")
-            file_template = file_template.replace("%imdbid%", "{imdbid}")
-            file_template = file_template.replace("%season%", "{season}")
-            file_template = file_template.replace("%episode%", "{episode}")
-            file_template = file_template.replace("%language%", "{language}")
-            file_template = file_template.replace("%resolution%", "{resolution}")
-
-            self.__file_name = file_template.format(
-                title=self.series.title_cleaned,
-                year=self.series.release_year,
-                imdbid=self.series.imdb,
-                season=f"{self.season.season_number:02d}",
-                episode=f"{self.episode_number:03d}",
-                language=self.selected_language,
-                resolution=getattr(self, "_resolution", "unknown"),
-            )
-        return self.__file_name
+        return self._episode_path.stem
 
     @property
     def _file_extension(self):
         if self.__file_extension is None:
             naming_template = os.getenv("ANIWORLD_NAMING_TEMPLATE", NAMING_TEMPLATE)
-            try:
-                file_part = naming_template.split("/")[-1]
-                if "." in file_part:
-                    ext = file_part.rsplit(".", 1)[-1]
-                    self.__file_extension = ext if ext else "mkv"
-                else:
-                    self.__file_extension = "mkv"
-            except IndexError:
+            file_part = naming_template.split("/")[-1]
+            if "." in file_part:
+                ext = file_part.rsplit(".", 1)[-1]
+                self.__file_extension = ext if ext else "mkv"
+            else:
                 self.__file_extension = "mkv"
         return self.__file_extension
 
     @property
     def _episode_path(self):
         if self.__episode_path is None:
-            self.__episode_path = (
-                self._folder_path / f"{self._file_name}.{self._file_extension}"
+            self.__base_folder, self.__episode_path = existing_numbered_episode_path(
+                self
             )
         return self.__episode_path
 
@@ -297,36 +233,27 @@ class AniworldEpisode:
 
     @property
     def episode_number(self):
+        """Number from the English title, falling back to the season's index."""
         if self.__episode_number is None:
-            self.__episode_number = self.__extract_episode_number()
+            number = None if self.is_movie else episode_number_from_title(self.title_en)
+            self.__episode_number = (
+                number if number is not None else self.season_episode_number
+            )
         return self.__episode_number
+
+    @property
+    def season_episode_number(self):
+        """Original season index used by URLs and season-specific metadata."""
+        if self.__season_episode_number is None:
+            self.__season_episode_number = self.__extract_episode_number()
+        return self.__season_episode_number
 
     @property
     def season(self):
         if self._season is None:
             from .season import AniworldSeason
 
-            if self.is_movie:
-                # https://aniworld.to/anime/stream/masamune-kuns-revenge/filme
-                movie_match = re.search(
-                    r"^(https://aniworld\.to/anime/stream/[^/]+/filme)",
-                    self.url,
-                )
-                if not movie_match:
-                    raise ValueError(
-                        f"Could not extract movie season from URL: {self.url}"
-                    )
-                season_url = movie_match.group(1)
-            else:
-                # https://aniworld.to/anime/stream/masamune-kuns-revenge/staffel-1
-                season_match = re.search(
-                    r"^(https://aniworld\.to/anime/stream/[^/]+/staffel-\d+)",
-                    self.url,
-                )
-                if not season_match:
-                    raise ValueError(f"Could not extract season from URL: {self.url}")
-                season_url = season_match.group(1)
-
+            season_url = self.url.rsplit("/", 1)[0]
             self._season = AniworldSeason(season_url, series=self._series)
 
         return self._season
@@ -335,18 +262,8 @@ class AniworldEpisode:
     def series(self):
         if self._series is None:
             from .series import AniworldSeries
-            # Example URLs:
-            # https://aniworld.to/anime/stream/highschool-dxd/staffel-1/episode-1
-            # https://aniworld.to/anime/stream/highschool-dxd/filme/film-1
 
-            # Regex to match up to /stream/<series-name>
-            match = re.match(r"(https://aniworld\.to/anime/stream/[^/]+)", self.url)
-            if match:
-                series_url = match.group(1)
-            else:
-                # fallback to full URL if regex fails
-                series_url = self.url
-
+            series_url = self.url.rsplit("/", 2)[0]
             self._series = AniworldSeries(series_url)
 
         return self._series
@@ -380,8 +297,8 @@ class AniworldEpisode:
     def selected_path(self, value):
         self.__selected_path_param = value
         self.__selected_path = None
+        self.__is_downloaded = None
         self.__base_folder = None
-        self.__folder_path = None
         self.__episode_path = None
 
     @property
@@ -400,9 +317,7 @@ class AniworldEpisode:
         self.__provider_url = None
         self.__is_downloaded = None
         self.__base_folder = None
-        self.__folder_path = None
         self.__episode_path = None
-        self.__file_name = None
 
     @property
     def selected_provider(self):
@@ -721,22 +636,21 @@ class AniworldEpisode:
         Returns:
             bool: True if the URL matches the movie pattern, otherwise False.
         """
-        pattern = r"^https://aniworld\.to/anime/stream/[^/]+/filme/film-\d+/?$"
-        return re.match(pattern, self.url) is not None
+        return self.url.rsplit("/", 2)[-2] == "filme"
 
     def __extract_skip_times(self):
         if self.is_movie:
             return None
 
+        season_index = self.season.season_number - 1
+        if season_index < 0:
+            return None
+
         from ...aniskip import get_skip_times
 
         mal_id = self.series.mal_id
-        logger.debug(f"Fetching MAL IDs for series: {mal_id}")
+        if not mal_id or season_index >= len(mal_id):
+            logger.debug("No MAL ID for this season, skipping AniSkip")
+            return None
 
-        season_number = self.season.season_number - 1
-        logger.debug(f"Using season number: {season_number + 1}")
-
-        episode_number = self.episode_number
-        logger.debug(f"Using episode number: {episode_number}")
-
-        return get_skip_times(mal_id[season_number], episode_number)
+        return get_skip_times(mal_id[season_index], self.season_episode_number)

@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import zipfile
 import zlib
+from decimal import Decimal
 from os import getenv
 from pathlib import Path
 from pprint import pprint
@@ -119,6 +120,12 @@ def _strip_html(value: str) -> str:
     return text
 
 
+def _chapter_key(url: str):
+    """Identify a chapter independently of the title slug and number formatting."""
+    title, _, number = urlparse(url).path.rstrip("/").rsplit("/", 2)
+    return title.rsplit("/", 1)[-1].split("-", 1)[0], Decimal(number)
+
+
 # -----------------------------
 # image
 # -----------------------------
@@ -148,7 +155,7 @@ class MangaFireToImage:
 
     def download(self, file_path: str | Path) -> Path:
         """Download the image to disk."""
-        return _download_file(self.image_url, Path(file_path))
+        return _download_file(self.image_url, Path(file_path).expanduser())
 
 
 # -----------------------------
@@ -198,12 +205,12 @@ class MangaFireToPage:
         """Download the page image."""
         if folder is None:
             folder = (
-                resolve_download_path(None, MANGA_PATH_KEY)
-                / _safe_name(self.chapter.series.title)
+                Path(self.chapter.selected_path)
+                / _safe_name(self.chapter.series_title)
                 / self.chapter.folder_name
             )
         else:
-            folder = Path(folder)
+            folder = Path(folder).expanduser()
 
         file_path = folder / self.file_name
         progress = (
@@ -254,7 +261,7 @@ class MangaFireToChapter:
         self.chapter_url = url
         self.chapter_id = chapter_id
         if self.is_volume and self.chapter_id is None:
-            self.chapter_id = int(url.rstrip("/").rsplit("/", 1)[-1])
+            self.chapter_id = int(urlparse(url).path.rstrip("/").rsplit("/", 1)[-1])
         self.chapter_number = chapter_number
         self.chapter_name = chapter_name
         self.chapter_language = chapter_language
@@ -292,7 +299,7 @@ class MangaFireToChapter:
 
     def __extract_chapter_number_from_url(self, chapter_url: str):
         """Return the chapter number encoded in a MangaFire chapter url."""
-        chapter_part = chapter_url.rstrip("/").rsplit("/chapter/", 1)[-1]
+        chapter_part = urlparse(chapter_url).path.rstrip("/").rsplit("/", 1)[-1]
         try:
             value = float(chapter_part)
         except ValueError:
@@ -309,8 +316,10 @@ class MangaFireToChapter:
         except Exception:
             chapters = []
 
+        key = _chapter_key(self.chapter_url)
         for chapter in chapters:
-            if getattr(chapter, "chapter_url", "") == self.chapter_url:
+            chapter_url = getattr(chapter, "chapter_url", "")
+            if chapter_url and _chapter_key(chapter_url) == key:
                 self.chapter_id = getattr(chapter, "chapter_id", self.chapter_id)
                 self.chapter_number = getattr(
                     chapter, "chapter_number", self.chapter_number
@@ -348,7 +357,11 @@ class MangaFireToChapter:
         if self.__chapter_data is None:
             if not self.chapter_id:
                 self.__load_metadata_from_series()
-                self.chapter_api_url = CHAPTER_API.format(self.chapter_id or 0)
+                if not self.chapter_id:
+                    raise ValueError(
+                        f"Could not resolve MangaFire chapter ID: {self.chapter_url}"
+                    )
+                self.chapter_api_url = CHAPTER_API.format(self.chapter_id)
             response = _get(self.chapter_api_url)
             self.__chapter_data = response.json().get("data", {})
         return self.__chapter_data
@@ -455,6 +468,14 @@ class MangaFireToChapter:
         return self._series
 
     @property
+    def series_title(self) -> str:
+        """Use parent metadata or the manga title embedded in the chapter data."""
+        if self._series is not None:
+            return self._series.title
+        title = self.chapter_data.get("title") or {}
+        return title.get("name") or self.series.title
+
+    @property
     def url(self) -> str:
         """Return the canonical chapter url."""
         return self.chapter_url
@@ -478,21 +499,14 @@ class MangaFireToChapter:
                 ) from exc
 
         self.__load_volume_metadata()
-        chapter_title = (
-            getattr(self._series, "title", "")
-            if self._series is not None
-            else (
-                self.chapter_data.get("title", {}).get("name", "")
-                if self.is_volume
-                else self.chapter_name or f"Chapter {self.chapter_number}"
-            )
-        )
         if folder is None:
             folder = (
-                Path(self.selected_path) / _safe_name(chapter_title) / self.folder_name
+                Path(self.selected_path)
+                / _safe_name(self.series_title)
+                / self.folder_name
             )
         else:
-            folder = Path(folder)
+            folder = Path(folder).expanduser()
 
         archive_path = folder.with_name(folder.name + f".{self.mangafire_format}")
 
@@ -572,7 +586,7 @@ class MangaFireToChapter:
                         (page.file_name, (folder / page.file_name).read_bytes())
                         for page in pages_to_download
                     )
-                    write_epub(zf, self, chapter_title, images)
+                    write_epub(zf, self, self.series_title, images)
                 else:
                     if existing_files:
                         with zipfile.ZipFile(archive_path, "r") as existing:
@@ -624,12 +638,13 @@ class MangaFireToSeries:
         self.__load_from_series_url(series_url)
 
     def __load_from_series_url(self, series_url: str) -> None:
-        """Load series data from a MangaFire title url."""
-        slug_part = series_url.rstrip("/").split("/title/")[-1]
+        """Read the title ID and optional display slug from a MangaFire URL."""
+        slug_part = urlparse(series_url).path.strip("/").split("/")[1]
+        hid, _, slug = slug_part.partition("-")
         self.__series_item = {
-            "hid": slug_part.split("-")[0],
-            "slug": "-".join(slug_part.split("-")[1:]),
-            "title": slug_part.split("-", 1)[1].replace("-", " ").title(),
+            "hid": hid,
+            "slug": slug,
+            "title": slug.replace("-", " ").title() or hid,
         }
 
     def __load_series_metadata(self) -> None:
@@ -862,7 +877,7 @@ class MangaFireToSeries:
                 self.title
             )
         else:
-            folder = Path(folder)
+            folder = Path(folder).expanduser()
 
         folder.mkdir(parents=True, exist_ok=True)
 

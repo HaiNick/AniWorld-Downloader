@@ -16,7 +16,7 @@ from ...logger import get_logger
 from ...models.common import clean_title
 from ...models.mangafire_to.series import _get as get_mangafire
 from ...models.moflix_stream.http import MoflixError
-from ...providers import resolve_provider
+from ...providers import normalize_url, resolve_provider
 from ...search import (
     GENRE_PAGE_SIZE,
     fetch_burningseries_series,
@@ -219,6 +219,7 @@ def series():
 
     provider = None
     try:
+        url = normalize_url(url)
         provider = resolve_provider(url)
         found = _series_model(provider, url)
         return jsonify(
@@ -279,6 +280,7 @@ def seasons():
 
     provider = None
     try:
+        url = normalize_url(url)
         provider = resolve_provider(url)
         if provider.name in SINGLE_PAGE_SITES:
             return jsonify({"seasons": _single_page_seasons(provider, url)})
@@ -361,6 +363,8 @@ def episodes():
     series_url = request.args.get("series_url", "").strip() or None
     provider = None
     try:
+        url = normalize_url(url)
+        series_url = normalize_url(series_url)
         provider = resolve_provider(url)
         if provider.name in SINGLE_PAGE_SITES:
             return jsonify({"episodes": _single_page_episodes(provider, url)})
@@ -438,14 +442,12 @@ def _season_episodes(provider, url, series_url):
     else:
         season = provider.season_cls(url=url, series=found)
 
-    downloaded = media.downloaded_episodes(found) if found else set()
-
     override_languages = SEASON_LANGUAGE_OVERRIDES.get(provider.name)
     season_languages = list(override_languages) if override_languages else None
     episode_languages = {}
     fallback_languages = None
     fallback_languages_resolved = False
-    if provider.name == "SerienStream":
+    if provider.name in ("SerienStream", "AniWorld"):
         episode_languages = dict(getattr(season, "episode_languages", {}) or {})
     if season_languages is None and provider.name in SEASON_LEVEL_LANGUAGE_SITES:
         try:
@@ -454,12 +456,16 @@ def _season_episodes(provider, url, series_url):
             logger.warning("%s language detection failed: %s", provider.name, exc)
             season_languages = ["German Dub"]
 
+    episodes = season.episodes
+    downloaded_urls = media.downloaded_episode_urls(found, episodes) if found else set()
     results = []
-    for episode in season.episodes:
+    for episode in episodes:
         if season_languages is not None:
             languages = season_languages
         elif provider.name == "SerienStream":
-            row_languages = episode_languages.get(episode.episode_number)
+            row_languages = episode_languages.get(
+                getattr(episode, "season_episode_number", episode.episode_number)
+            )
             if row_languages is not None:
                 languages = list(row_languages)
             else:
@@ -478,6 +484,8 @@ def _season_episodes(provider, url, series_url):
                         fallback_languages = ["German Dub"]
                     fallback_languages_resolved = True
                 languages = fallback_languages
+        elif provider.name == "AniWorld" and episode.url in episode_languages:
+            languages = list(episode_languages[episode.url])
         else:
             languages = media.language_labels(episode.provider_data)
         if provider.name == "HanimeTV" and not languages:
@@ -489,8 +497,7 @@ def _season_episodes(provider, url, series_url):
                 "episode_number": episode.episode_number,
                 "title_de": getattr(episode, "title_de", ""),
                 "title_en": getattr(episode, "title_en", ""),
-                "downloaded": (episode.season.season_number, episode.episode_number)
-                in downloaded,
+                "downloaded": episode.url in downloaded_urls,
                 "available_languages": languages,
                 "page_count": 0,
             }
@@ -592,6 +599,7 @@ def providers():
         return jsonify({"error": "url is required"}), 400
 
     try:
+        url = normalize_url(url)
         provider = resolve_provider(url)
         if provider.name == "MangaFire":
             return jsonify({"providers": {}})

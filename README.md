@@ -16,7 +16,7 @@ Find, download, and watch anime, movies, and series, or save manga chapters to r
 
 It runs on **Windows, macOS, and Linux**, with **Docker** and standalone builds available too. Free and open source, with no ads, tracking, or paid-only features.
 
-[Getting started](#quick-start) · [Supported sites](#supported-sites) · [Docker](#docker) · [Documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/) · [Python examples](examples)
+[Getting started](#quick-start) · [Supported sites](#supported-sites) · [Docker](#docker) · [Documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/) · [Python examples](https://github.com/phoenixthrush/AniWorld-Downloader/tree/models/examples)
 
 ![Interactive terminal menu](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/.github/assets/demo.png?raw=true)
 
@@ -31,6 +31,8 @@ python -m pip install -U aniworld
 aniworld -w
 ```
 
+If `pip` reports `externally-managed-environment`, create and activate a virtual environment before running the commands above. [Python Packaging Guide](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/#create-and-use-virtual-environments)
+
 Open [localhost:8080](http://localhost:8080) to use the Web UI. To start the interactive terminal menu instead:
 
 ```bash
@@ -43,7 +45,9 @@ To install the latest development version from the `models` branch:
 pip install --upgrade git+https://github.com/phoenixthrush/AniWorld-Downloader.git@models
 ```
 
-Video downloads need **FFmpeg**. Playback uses **mpv**, **IINA**, or **Syncplay**, depending on the action you choose. The app offers to install missing portable tools on Windows or system packages on macOS/Linux. You can also install them yourself; unattended deployments should provide the tools in advance.
+Video downloads need **FFmpeg**. Watching uses **mpv**, or **IINA** on macOS. Synchronized playback requires **Syncplay and mpv**. The app can offer portable FFmpeg, mpv, and Syncplay installation on Windows, and player installation through supported package managers on macOS/Linux. Install FFmpeg yourself on macOS/Linux; unattended deployments should provide the required tools in advance.
+
+For optional uBlock Origin Lite in Patchright's Chromium, run `aniworld --setup-ublock` once after installing with pip and set `ANIWORLD_UBLOCK=1` in your `.env`. Docker includes the extension in the image. Set the same flag to enable it there.
 
 Prefer another installation method? Use [Docker](#docker) or download a standalone build from [GitHub Releases](https://github.com/phoenixthrush/AniWorld-Downloader/releases). See the [documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/) for platform-specific setup and troubleshooting.
 
@@ -54,6 +58,7 @@ Prefer another installation method? Use [Docker](#docker) or download a standalo
 - Pick the series Auto-Sync keeps up to date, where each one starts, and when it is checked.
 - Choose available audio and subtitle languages, with fallback to other stream hosters.
 - Customize supported naming templates and output formats, including MKV/MP4 for video and JPG/CBZ/EPUB for manga; naming support varies by backend.
+- AniWorld and SerienStream use explicit episode numbers from English titles, including `[Episode N]` and `[JP Episode N]`, with seasonal numbering as fallback and existing seasonal downloads recognised. Set `ANIWORLD_SEASON_EPISODE_NUMBERS=1` or use the Web UI setting to keep seasonal numbering for new downloads. See [switching an existing library to seasonal numbering](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/configuration#switching-an-existing-library-to-seasonal-numbering).
 - Watch through external players, with AniSkip and Anime4K support where applicable.
 
 The Web UI also supports local accounts, optional OIDC SSO, custom CSS, and background shaders. SSO alongside local login requires both `--web-auth` and `--web-sso`; `--web-force-sso` enables SSO-only authentication. A JSON API and optional Discord request bot let you connect it to other tools. Features and language availability vary by site.
@@ -64,43 +69,43 @@ For CAPTCHA browser visibility, manual solving, timeouts, and debug logs, see [C
 
 AniWorld and SerienStream are the main focus of the project.
 
-See the [supported sites documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/supported-sites) for live-check details and IP/VPN differences.
+See the [supported sites documentation](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/supported-sites) for accepted URLs, search capabilities and site switches. These are implemented integrations; availability depends on the source, title, hoster and connection.
 
-| Site | Content | Status | Notes |
+| Site | Content | Interfaces | Web UI default |
 | --- | --- | --- | --- |
-| AniWorld | Anime and anime movies | Stream URLs resolved | VOE, Doodstream, and Filemoon samples passed; Vidmoly failed |
-| SerienStream | Series | Stream URLs resolved | Both dub presets resolved VOE; CAPTCHA handling can block access |
-| MegaKino | Movies and series | Stream URLs resolved | Sampled title's VOE link passed; a separate MegaKino hoster sample also passed |
-| Filmo | Movies | Stream URLs resolved | VOE samples passed |
-| Moflix | Movies and series | Stream URLs resolved | MoflixClick and Vidara samples passed; verification can block title discovery |
-| MangaFire | Manga | Chapter/page URLs resolved | Two sample titles; archive creation and image downloads were not tested |
-| FilmPalast | Movies | Stream URL resolved | VOE sample passed; some requests returned no extractable source |
-| Hanime | Adult animation | Stream URL resolved | Trending feed can return HTTP 403 or require a CAPTCHA |
-| HentaiTV | Adult animation | Stream and poster URLs resolved | Optional Web UI tab; disabled by default |
-| AnimeIDHentai | Adult animation | Stream and poster URLs resolved; content unverified | Returned stream filename differed from the selected title; CLI/Python only |
-| HentaiHaven | Adult animation | Stream and poster URLs resolved | Optional Web UI tab; disabled by default |
-| Kinox | Movies and series | Blocked by verification CAPTCHA | Disabled by default |
-| BurningSeries | Series | Stream mirrors returned VPN warning pages | No usable mirror for the sample; stopped at the first blocked hoster |
+| AniWorld | Anime and anime movies | CLI, Python, Web UI | Enabled |
+| SerienStream | Series | CLI, Python, Web UI | Enabled |
+| MegaKino | Movies and series | CLI, Python, Web UI | Enabled |
+| Filmo | Movies | CLI, Python, Web UI | Enabled |
+| Moflix | Movies and series | CLI, Python, Web UI | Enabled |
+| MangaFire | Manga | CLI, Python, Web UI | Enabled |
+| FilmPalast | Movies | CLI, Python, Web UI | Enabled |
+| Hanime | Adult animation | CLI, Python, Web UI | Disabled |
+| HentaiTV | Adult animation | CLI, Python, Web UI | Disabled |
+| AnimeIDHentai | Adult animation | CLI, Python | No tab |
+| HentaiHaven | Adult animation | CLI, Python, Web UI | Disabled |
+| Kinox | Movies and series | CLI, Python, Web UI | Disabled |
+| BurningSeries | Series | CLI, Python, Web UI | Disabled |
 
 "Disabled by default" refers to Web UI visibility; direct CLI URLs remain accepted. Hanime (`hanime.tv`), HentaiTV (`hentai.tv`) and HentaiHaven (`hentaihaven.xxx`) have optional Web UI tabs, enabled with `ANIWORLD_ENABLE_HTV=1`, `ANIWORLD_ENABLE_HENTAITV=1` and `ANIWORLD_ENABLE_HENTAIHAVEN=1`. AnimeIDHentai (`animeidhentai.com`) supports direct CLI URLs and Python use. See [adult-site usage](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/usage#adult-site-backends) for examples.
 
 ### Stream Hosters
 
-Sites list the titles; stream hosters provide the video links.
+Sites list the titles; stream hosters provide the video links. The table describes implemented extraction functions.
 
 | Hoster | Stream extraction | Preview extraction |
 | --- | --- | --- |
-| VOE | Fresh source-site samples passed; saved standalone sample returned HTTP 404 | All tested previews failed |
-| Filemoon | Fresh AniWorld samples passed; saved standalone sample was inconsistent | Not implemented |
-| Doodstream | Samples passed | Not implemented |
-| MegaKino | Sample passed | Not implemented |
-| Gupload | Not checked: no saved embed or discovered sample | Not implemented |
-| MoflixClick | Moflix sample passed; no saved standalone embed | Not implemented |
-| Vidara | Moflix sample passed; Kinox remained CAPTCHA-blocked | Not implemented |
-| Vidmoly | Samples failed: no extractable script content | Samples failed |
-| Vidoza | Sample URL returned HTTP 404 | Sample URL returned HTTP 404 |
+| VOE | Implemented | Implemented |
+| Filemoon | Implemented | Not implemented |
+| Doodstream | Implemented | Not implemented |
+| MegaKino | Implemented | Not implemented |
+| Gupload | Implemented | Not implemented |
+| MoflixClick | Implemented | Not implemented |
+| Vidara | Implemented | Not implemented |
+| Vidmoly | Implemented | Implemented |
+| Vidoza | Implemented | Implemented |
 
-If a hoster fails, the downloader can try others in your configured fallback order, provided the title offers them in the selected language. It does not automatically switch languages. A failed or missing sample does not establish that a hoster has shut down. See [live provider checks](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/contributing#live-provider-checks) to repeat these checks.
+If a hoster fails, the downloader can try others in your configured fallback order, provided the title offers them in the selected language. It does not automatically switch languages. Use the [live provider checks](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/contributing#live-provider-checks) to test current source and hoster links. Those scripts resolve URLs; a complete download and playback or decoding check are needed to verify the resulting file.
 
 ## CLI Usage
 
@@ -126,14 +131,14 @@ aniworld --version
 
 ## Docker
 
-Save [`docker-compose.yaml`](docker-compose.yaml) in a folder on your machine. From that folder, create the download directory and start the app:
+Save [`docker-compose.yaml`](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/docker-compose.yaml) in a folder on your machine. From that folder, create the download directory and start the app:
 
 ```bash
 mkdir -p Downloads
 docker compose up -d
 ```
 
-Open [localhost:8080](http://localhost:8080) when the container is ready. The image includes FFmpeg, Chromium for captcha handling, and the EPUB extra. Chromium setup runs only when an operation needs a browser and reuses an existing installation.
+Open [localhost:8080](http://localhost:8080) when the container is ready. The image includes FFmpeg, Chromium, Xvfb, and the EPUB, SSO and Discord extras. Its entrypoint starts a virtual display before launching the app, including when you supply a custom command.
 
 The terminal menu in the Docker image offers only Download and uses your configured download folder.
 
@@ -152,7 +157,7 @@ The Compose file includes configuration examples. Set persistent options in its 
 
 ## Configuration and Integrations
 
-Configuration lives in `~/.aniworld/.env` by default. Set `ANIWORLD_INSTALL_FOLDER` to change the app data directory. See [`src/aniworld/.env.example`](src/aniworld/.env.example) for available settings and defaults.
+Configuration lives in `~/.aniworld/.env` by default. Set `ANIWORLD_INSTALL_FOLDER` to change the app data directory. See [`src/aniworld/.env.example`](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/src/aniworld/.env.example) for available settings and defaults.
 
 Many settings can be changed in the Web UI. Those marked *resets after restart* must also be set in your `.env` or deployment environment to persist. Saved themes, database records, and Discord bot settings are stored separately and survive restarts when the app data is retained.
 
@@ -174,9 +179,9 @@ curl -H "X-API-Key: YOUR_API_KEY" http://localhost:8080/api/queue
 
 Keys have read, read-and-download, or full-access permissions. They cannot manage other API keys. The settings page includes an endpoint reference with examples.
 
-**Appearance:** use **Settings → Appearance** for custom CSS and background shaders. The [`themes/`](themes) directory contains a light theme and a documented CSS template. For community themes and installation instructions, see [aniworld-themes](https://github.com/SiroxCW/aniworld-themes) by SiroxCW. To recover from a theme that hides controls, open `/settings?nocss=1`.
+**Appearance:** use **Settings → Appearance** for custom CSS and background shaders. The [`themes/`](https://github.com/phoenixthrush/AniWorld-Downloader/tree/models/themes) directory contains a light theme and a documented CSS template. For community themes and installation instructions, see [aniworld-themes](https://github.com/SiroxCW/aniworld-themes) by SiroxCW. To recover from a theme that hides controls, open `/settings?nocss=1`.
 
-**Python:** all public site models are available from `aniworld` or `aniworld.models`. Search and genre functions share `aniworld.search`; see [Genre Search](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/genre-search) for supported filters and site limits. The [`examples/`](examples) directory demonstrates models, metadata, downloads, and genre queries.
+**Python:** all public site models are available from `aniworld` or `aniworld.models`. Search and genre functions share `aniworld.search`; see [Genre Search](https://www.phoenixthrush.com/AniWorld-Downloader-Docs/genre-search) for supported filters and site limits. The [`examples/`](https://github.com/phoenixthrush/AniWorld-Downloader/tree/models/examples) directory demonstrates models, metadata, downloads, and genre queries.
 
 ## Contributing
 
@@ -207,11 +212,15 @@ AniWorld Downloader uses [mpv](https://github.com/mpv-player/mpv), [IINA](https:
 
 ### Other Cool Projects
 
+> [!NOTE]
+> These projects were created by other developers. I don’t track or routinely review changes to their source code, so please use them with care.
+
 - [Jellyfin-AniWorld-Downloader](https://github.com/SiroxCW/Jellyfin-AniWorld-Downloader) by SiroxCW — browse and download AniWorld content from Jellyfin.
 - [aniworld-themes](https://github.com/SiroxCW/aniworld-themes) by SiroxCW — community themes and background shaders for the Web UI.
 - [AniSeerr](https://github.com/Yezun-hikari/AniSeerr) by Yezun-hikari — connect Seerr requests to AniWorld Downloader.
 - [AniBridge](https://github.com/Zzackllack/AniBridge) by Zzackllack — connect supported catalogues to automation tools through FastAPI.
 - [AniLoader](https://github.com/WimWamWom/AniLoader) by WimWamWom — a web-based download manager with automation.
+- [anidl-renamer](https://github.com/eierman324/anidl-renamer) by eierman324 — a Tampermonkey userscript that generates scripts to rename downloaded files using episode titles from the Web UI.
 
 ## Support and Community
 
@@ -239,4 +248,4 @@ Questions about content hosted by another service should be directed to that ser
 
 ## License
 
-AniWorld Downloader is available under the [MIT License](LICENSE).
+AniWorld Downloader is available under the [MIT License](https://github.com/phoenixthrush/AniWorld-Downloader/blob/models/LICENSE).
