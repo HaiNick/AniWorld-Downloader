@@ -317,7 +317,9 @@ def _launch_browser_context(runtime, offscreen=False):
     visible = os.getenv("ANIWORLD_CAPTCHA_VISIBLE", "auto").strip().lower()
     if visible in ("0", "1"):
         offscreen = visible == "0"
-    args = ["--disable-dev-shm-usage"]
+    from .dns import browser_dns_args
+
+    args = ["--disable-dev-shm-usage", *browser_dns_args()]
     if offscreen:
         args.append("--window-position=-32000,-32000")
     extension = ensure_ublock_lite()
